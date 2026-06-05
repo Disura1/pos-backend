@@ -1,15 +1,20 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const bc = require('../controllers/branchController');
-const { authenticate, authorize } = require('../middleware/auth');
+const {
+  getAllBranches,
+  createBranch,
+  updateBranch,
+  deleteBranch,
+  hardDeleteBranch,
+  getBranchStats,
+} = require("../controllers/branchController");
+const { authenticate } = require("../middleware/auth");
 
-const isOwner = authorize('Owner', 'Admin');
-
-router.use(authenticate);
-router.get('/', bc.getAllBranches);
-router.get('/:id/stats', bc.getBranchStats);
-router.post('/', isOwner, bc.createBranch);
-router.put('/:id', isOwner, bc.updateBranch);
-router.delete('/:id', isOwner, bc.deleteBranch);
+router.get("/", authenticate, getAllBranches);
+router.post("/", authenticate, createBranch);
+router.put("/:id", authenticate, updateBranch);
+router.delete("/:id", authenticate, deleteBranch); // deactivate
+router.delete("/:id/hard", authenticate, hardDeleteBranch); // permanent delete
+router.get("/:id/stats", authenticate, getBranchStats);
 
 module.exports = router;

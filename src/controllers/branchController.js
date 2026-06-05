@@ -1,4 +1,4 @@
-const pool = require('../config/db');
+const pool = require("../config/db");
 
 exports.getAllBranches = async (req, res) => {
   try {
@@ -16,7 +16,7 @@ exports.getAllBranches = async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    console.error('getAllBranches error:', err.message);
+    console.error("getAllBranches error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -25,12 +25,12 @@ exports.createBranch = async (req, res) => {
   const { branch_name, address, phone } = req.body;
   try {
     const result = await pool.query(
-      'INSERT INTO branches (branch_name, address, phone) VALUES ($1, $2, $3) RETURNING *',
-      [branch_name, address || null, phone || null]
+      "INSERT INTO branches (branch_name, address, phone) VALUES ($1, $2, $3) RETURNING *",
+      [branch_name, address || null, phone || null],
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('createBranch error:', err.message);
+    console.error("createBranch error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -40,12 +40,12 @@ exports.updateBranch = async (req, res) => {
   const { branch_name, address, phone, is_active } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE branches SET branch_name=$1, address=$2, phone=$3, is_active=$4 WHERE id=$5 RETURNING *',
-      [branch_name, address || null, phone || null, is_active, id]
+      "UPDATE branches SET branch_name=$1, address=$2, phone=$3, is_active=$4 WHERE id=$5 RETURNING *",
+      [branch_name, address || null, phone || null, is_active, id],
     );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('updateBranch error:', err.message);
+    console.error("updateBranch error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -53,10 +53,12 @@ exports.updateBranch = async (req, res) => {
 exports.deleteBranch = async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query('UPDATE branches SET is_active = false WHERE id = $1', [id]);
-    res.json({ message: 'Branch deactivated' });
+    await pool.query("UPDATE branches SET is_active = false WHERE id = $1", [
+      id,
+    ]);
+    res.json({ message: "Branch deactivated" });
   } catch (err) {
-    console.error('deleteBranch error:', err.message);
+    console.error("deleteBranch error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
@@ -64,28 +66,74 @@ exports.deleteBranch = async (req, res) => {
 exports.getBranchStats = async (req, res) => {
   const { id } = req.params;
   try {
-    const revenue = await pool.query(`
+    const revenue = await pool.query(
+      `
       SELECT COALESCE(SUM(total_amount), 0) AS today_revenue,
              COUNT(*)                        AS today_transactions
       FROM sales
       WHERE branch_id = $1
         AND sale_date::date = CURRENT_DATE
-    `, [id]);
+    `,
+      [id],
+    );
 
-    const lowStock = await pool.query(`
+    const lowStock = await pool.query(
+      `
       SELECT COUNT(*) AS cnt
       FROM inventory
       WHERE branch_id = $1
         AND stock_qty <= COALESCE(low_stock_threshold, 5)
-    `, [id]);
+    `,
+      [id],
+    );
 
     res.json({
-      today_revenue:      revenue.rows[0].today_revenue,
+      today_revenue: revenue.rows[0].today_revenue,
       today_transactions: revenue.rows[0].today_transactions,
-      low_stock_count:    lowStock.rows[0].cnt,
+      low_stock_count: lowStock.rows[0].cnt,
     });
   } catch (err) {
-    console.error('getBranchStats error:', err.message);
+    console.error("getBranchStats error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+};
+
+exports.hardDeleteBranch = async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Safety check — block delete if branch has staff assigned
+    const staffCheck = await client.query(
+      "SELECT COUNT(*) AS cnt FROM users WHERE branch_id = $1",
+      [id],
+    );
+    if (parseInt(staffCheck.rows[0].cnt) > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error:
+          "Cannot delete this branch — it still has staff assigned. Reassign or remove staff first.",
+      });
+    }
+
+    // Remove inventory records for this branch
+    await client.query("DELETE FROM inventory WHERE branch_id = $1", [id]);
+
+    // Remove sales linked to this branch
+    // (only safe if you want full removal — adjust if you prefer to keep history)
+    // await client.query('DELETE FROM sales WHERE branch_id = $1', [id]);
+
+    // Delete the branch
+    await client.query("DELETE FROM branches WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
+    res.json({ message: "Branch permanently deleted" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("hardDeleteBranch error:", err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 };
