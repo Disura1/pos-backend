@@ -50,6 +50,32 @@ exports.deleteProduct = async (req, res) => {
   }
 };
 
+exports.updateVariant = async (req, res) => {
+  const { id } = req.params;
+  const { sku, size, color, barcode, variant_price } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE product_variants SET sku=$1, size=$2, color=$3, barcode=$4, variant_price=$5
+       WHERE id=$6 RETURNING *`,
+      [sku, size || null, color || null, barcode || null, variant_price || null, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.deleteVariant = async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query('DELETE FROM inventory WHERE variant_id = $1', [id]);
+    await pool.query('DELETE FROM product_variants WHERE id = $1', [id]);
+    res.json({ message: 'Variant deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.addVariant = async (req, res) => {
   const { product_id, sku, size, color, barcode, variant_price } = req.body;
   const client = await pool.connect();

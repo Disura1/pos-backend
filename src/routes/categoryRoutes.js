@@ -10,6 +10,6 @@ router.use(authenticate);
 router.get('/', cc.getAllCategories);
 router.post('/', isOwnerOrManager, cc.createCategory);
 router.put('/:id', isOwnerOrManager, cc.updateCategory);
-router.delete('/:id', isOwner, cc.deleteCategory);
+router.delete('/:id', isOwnerOrManager, cc.deleteCategory);
 
 module.exports = router;

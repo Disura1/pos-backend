@@ -16,5 +16,7 @@ router.post('/',                   isOwnerOrManager, pc.createProduct);
 router.put('/:id',                 isOwnerOrManager, pc.updateProduct);
 router.delete('/:id',              isOwner, pc.deleteProduct);
 router.post('/variant',            isOwnerOrManager, pc.addVariant);
+router.put('/variant/:id',         isOwnerOrManager, pc.updateVariant);
+router.delete('/variant/:id',      isOwnerOrManager, pc.deleteVariant);
 
 module.exports = router;
