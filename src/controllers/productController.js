@@ -42,13 +42,39 @@ exports.updateProduct = async (req, res) => {
 
 exports.deleteProduct = async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    await pool.query("UPDATE products SET is_active = false WHERE id = $1", [
-      id,
-    ]);
-    res.json({ message: "Product removed" });
+    await client.query("BEGIN");
+
+    // Get all variant IDs for this product
+    const variantRes = await client.query(
+      "SELECT id FROM product_variants WHERE product_id = $1",
+      [id],
+    );
+    const variantIds = variantRes.rows.map((r) => r.id);
+
+    if (variantIds.length > 0) {
+      // Delete inventory records for all variants
+      await client.query(
+        "DELETE FROM inventory WHERE variant_id = ANY($1::int[])",
+        [variantIds],
+      );
+      // Delete all variants
+      await client.query("DELETE FROM product_variants WHERE product_id = $1", [
+        id,
+      ]);
+    }
+
+    // Now delete (or soft-delete) the product itself
+    await client.query("DELETE FROM products WHERE id = $1", [id]);
+
+    await client.query("COMMIT");
+    res.json({ message: "Product and all variants removed" });
   } catch (err) {
+    await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 };
 
