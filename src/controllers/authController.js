@@ -14,7 +14,7 @@ exports.login = async (req, res) => {
        JOIN roles r ON u.role_id = r.id
        LEFT JOIN branches b ON u.branch_id = b.id
        WHERE u.username = $1`,
-      [username]
+      [username],
     );
     if (result.rows.length === 0)
       return res.status(401).json({ error: "Invalid credentials" });
@@ -74,6 +74,34 @@ exports.changePassword = async (req, res) => {
       userId,
     ]);
     res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getMe = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id, u.username, u.full_name, u.branch_id,
+              r.role_name, b.branch_name
+       FROM users u
+       JOIN roles r ON u.role_id = r.id
+       LEFT JOIN branches b ON u.branch_id = b.id
+       WHERE u.id = $1`,
+      [req.user.id],
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: "User not found" });
+
+    const u = result.rows[0];
+    res.json({
+      id: u.id,
+      username: u.username,
+      full_name: u.full_name || null,
+      role: u.role_name,
+      branchId: u.branch_id,
+      branchName: u.branch_name,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
