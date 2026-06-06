@@ -265,7 +265,7 @@ exports.getProductsByCategoryAndBranch = async (req, res) => {
         SELECT DISTINCT p.*
         FROM products p
         JOIN product_variants pv ON pv.product_id = p.id
-        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2
+        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.stock_qty > 0
         WHERE p.category_id = $1
           AND p.is_active = true
         ORDER BY p.name
@@ -305,7 +305,7 @@ exports.getVariantsByBranch = async (req, res) => {
             )
           ) AS stock
         FROM product_variants pv
-        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2
+        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.stock_qty > 0
         JOIN branches b ON b.id = i.branch_id
         WHERE pv.product_id = $1
         ORDER BY pv.size, pv.color
