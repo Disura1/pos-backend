@@ -251,3 +251,90 @@ exports.getAllProducts = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+exports.getProductsByCategoryAndBranch = async (req, res) => {
+  const { categoryId } = req.params;
+  const { branchId } = req.query;
+  try {
+    let query, params;
+
+    if (branchId) {
+      // Return only products that have at least one variant
+      // with an inventory record (any qty) in the selected branch
+      query = `
+        SELECT DISTINCT p.*
+        FROM products p
+        JOIN product_variants pv ON pv.product_id = p.id
+        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2
+        WHERE p.category_id = $1
+          AND p.is_active = true
+        ORDER BY p.name
+      `;
+      params = [categoryId, branchId];
+    } else {
+      query = `
+        SELECT * FROM products
+        WHERE category_id = $1 AND is_active = true
+        ORDER BY name
+      `;
+      params = [categoryId];
+    }
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.getVariantsByBranch = async (req, res) => {
+  const { productId } = req.params;
+  const { branchId } = req.query;
+  try {
+    let query, params;
+
+    if (branchId) {
+      // Only return variants that have an inventory record for this branch
+      query = `
+        SELECT pv.*,
+          json_build_array(
+            json_build_object(
+              'branch_id', i.branch_id,
+              'branch_name', b.branch_name,
+              'stock_qty', i.stock_qty
+            )
+          ) AS stock
+        FROM product_variants pv
+        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2
+        JOIN branches b ON b.id = i.branch_id
+        WHERE pv.product_id = $1
+        ORDER BY pv.size, pv.color
+      `;
+      params = [productId, branchId];
+    } else {
+      // All branches (manager view — existing behavior)
+      query = `
+        SELECT pv.*,
+          COALESCE(json_agg(
+            json_build_object(
+              'branch_id', i.branch_id,
+              'branch_name', b.branch_name,
+              'stock_qty', i.stock_qty
+            )
+          ) FILTER (WHERE i.id IS NOT NULL), '[]') AS stock
+        FROM product_variants pv
+        LEFT JOIN inventory i ON pv.id = i.variant_id
+        LEFT JOIN branches b ON i.branch_id = b.id
+        WHERE pv.product_id = $1
+        GROUP BY pv.id
+        ORDER BY pv.size, pv.color
+      `;
+      params = [productId];
+    }
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
