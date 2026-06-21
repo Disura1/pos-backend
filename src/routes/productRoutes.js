@@ -13,6 +13,7 @@ router.get("/scan/:barcode", pc.scanProduct);
 router.get("/all", pc.getAllProducts);
 router.get("/category/:categoryId", pc.getProductsByCategory);
 router.get("/category/:categoryId/branch", pc.getProductsByCategoryAndBranch);
+router.get("/category/:categoryId/with-stock", pc.getProductsByCategoryWithStock);
 router.get("/:productId/variants", pc.getVariants);
 router.get("/:productId/variants/branch", pc.getVariantsByBranch);
 router.post("/", isManagerOnly, pc.createProduct);

@@ -13,11 +13,12 @@ exports.getInventory = async (req, res) => {
         c.name  AS category_name,
         b.branch_name, i.branch_id
       FROM inventory i
-      JOIN product_variants pv ON i.variant_id = pv.id
-      JOIN products p          ON pv.product_id = p.id
+      JOIN product_variants pv ON i.variant_id = pv.id AND pv.is_active = true
+      JOIN products p          ON pv.product_id = p.id AND p.is_active = true
       LEFT JOIN categories c   ON p.category_id = c.id
       JOIN branches b          ON i.branch_id   = b.id
-      WHERE ($1::int IS NULL OR i.branch_id = $1)
+      WHERE i.is_active = true
+        AND ($1::int IS NULL OR i.branch_id = $1)
       ORDER BY p.name, pv.size, pv.color
     `,
       [branchId || null],

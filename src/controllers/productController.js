@@ -115,7 +115,7 @@ exports.deleteVariant = async (req, res) => {
 };
 
 exports.addVariant = async (req, res) => {
-  const { product_id, sku, size, color, barcode, variant_price } = req.body;
+  const { product_id, sku, size, color, barcode, variant_price, branch_id } = req.body;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -143,10 +143,15 @@ exports.addVariant = async (req, res) => {
       "SELECT id FROM branches WHERE is_active = true",
     );
     for (const branch of branches.rows) {
+      // The branch that created this variant gets is_active = true immediately
+      // (qty stays 0 until they actually receive stock, but it's their own item
+      // so it should show as Out of Stock + trigger low stock alerts right away).
+      // All other branches stay is_active = false until they receive it themselves.
+      const isOwningBranch = branch_id && branch.id === parseInt(branch_id);
       await client.query(
         `INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active) 
-        VALUES ($1, $2, 0, false) ON CONFLICT DO NOTHING`,
-        [variantId, branch.id],
+        VALUES ($1, $2, 0, $3) ON CONFLICT DO NOTHING`,
+        [variantId, branch.id, isOwningBranch],
       );
     }
 
@@ -215,7 +220,7 @@ exports.searchProducts = async (req, res) => {
              COALESCE(i.stock_qty, 0) AS stock_qty
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
-      LEFT JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2
+      JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2 AND i.is_active = true
       WHERE p.is_active = true AND pv.is_active = true AND (
         p.name ILIKE $1 OR pv.sku ILIKE $1 OR pv.barcode ILIKE $1
       )
@@ -235,8 +240,8 @@ exports.getAllProducts = async (req, res) => {
       SELECT p.name, pv.sku, pv.size, pv.color, p.base_price, i.stock_qty
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
-      JOIN inventory i ON pv.id = i.variant_id
-      WHERE p.is_active = true
+      JOIN inventory i ON pv.id = i.variant_id AND i.is_active = true
+      WHERE p.is_active = true AND pv.is_active = true
       ORDER BY p.name
     `);
     res.json(result.rows);
@@ -328,6 +333,58 @@ exports.getVariantsByBranch = async (req, res) => {
     }
 
     const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Get products in a category WITH stock summary for a specific branch (manager)
+// or with stock across ALL branches + total (owner)
+exports.getProductsByCategoryWithStock = async (req, res) => {
+  const { categoryId } = req.params;
+  const { branchId, allBranches } = req.query;
+  try {
+    if (allBranches === "true") {
+      // OWNER VIEW — show stock per branch + total, only counting active rows
+      const result = await pool.query(
+        `
+        SELECT p.id AS product_id, p.name, p.base_price, p.description,
+          COALESCE(json_agg(
+            json_build_object(
+              'branch_id', i.branch_id,
+              'branch_name', b.branch_name,
+              'stock_qty', i.stock_qty
+            )
+          ) FILTER (WHERE i.id IS NOT NULL AND i.is_active = true), '[]') AS stock,
+          COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true), 0) AS total_stock
+        FROM products p
+        LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
+        LEFT JOIN inventory i ON i.variant_id = pv.id
+        LEFT JOIN branches b ON b.id = i.branch_id
+        WHERE p.category_id = $1 AND p.is_active = true
+        GROUP BY p.id
+        ORDER BY p.name
+        `,
+        [categoryId],
+      );
+      return res.json(result.rows);
+    }
+
+    // MANAGER VIEW — show stock for their own branch only, only active rows
+    const result = await pool.query(
+      `
+      SELECT p.id AS product_id, p.name, p.base_price, p.description,
+        COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true AND i.branch_id = $2), 0) AS branch_stock
+      FROM products p
+      LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
+      LEFT JOIN inventory i ON i.variant_id = pv.id
+      WHERE p.category_id = $1 AND p.is_active = true
+      GROUP BY p.id
+      ORDER BY p.name
+      `,
+      [categoryId, branchId || 0],
+    );
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
