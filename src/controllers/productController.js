@@ -152,7 +152,8 @@ exports.addVariant = async (req, res) => {
     );
     for (const branch of branches.rows) {
       await client.query(
-        `INSERT INTO inventory (variant_id, branch_id, stock_qty) VALUES ($1,$2,0) ON CONFLICT DO NOTHING`,
+        `INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active) 
+        VALUES ($1, $2, 0, false) ON CONFLICT DO NOTHING`,
         [variantId, branch.id],
       );
     }
@@ -265,7 +266,9 @@ exports.getProductsByCategoryAndBranch = async (req, res) => {
         SELECT DISTINCT p.*
         FROM products p
         JOIN product_variants pv ON pv.product_id = p.id
-        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.stock_qty > 0
+        JOIN inventory i ON i.variant_id = pv.id 
+          AND i.branch_id = $2 
+          AND i.is_active = true
         WHERE p.category_id = $1
           AND p.is_active = true
         ORDER BY p.name

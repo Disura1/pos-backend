@@ -17,9 +17,9 @@ router.get("/:productId/variants", pc.getVariants);
 router.get("/:productId/variants/branch", pc.getVariantsByBranch);
 router.post("/", isManagerOnly, pc.createProduct);
 router.put("/:id", isManagerOnly, pc.updateProduct);
-router.delete("/:id", isManagerOnly, pc.deleteProduct);
+router.delete("/:id", isOwner, pc.deleteProduct);
 router.post("/variant", isManagerOnly, pc.addVariant);
 router.put("/variant/:id", isManagerOnly, pc.updateVariant);
-router.delete("/variant/:id", isManagerOnly, pc.deleteVariant);
+router.delete("/variant/:id", isOwner, pc.deleteVariant);
 
 module.exports = router;
