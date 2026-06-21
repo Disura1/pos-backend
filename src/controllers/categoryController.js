@@ -4,7 +4,7 @@ const pool = require("../config/db");
 exports.getAllCategories = async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM categories ORDER BY parent_id ASC, name ASC",
+      "SELECT * FROM categories WHERE is_active = true ORDER BY parent_id ASC, name ASC",
     );
     res.json(result.rows);
   } catch (err) {
@@ -43,9 +43,13 @@ exports.updateCategory = async (req, res) => {
 exports.deleteCategory = async (req, res) => {
   const { id } = req.params;
   try {
-    // Warning: Ensure your DB schema uses ON DELETE CASCADE for parent_id
-    await pool.query("DELETE FROM categories WHERE id = $1", [id]);
-    res.json({ message: "Category and its sub-items removed" });
+    // Soft delete — also deactivate any sub-categories under it
+    await pool.query(
+      `UPDATE categories SET is_active = false 
+       WHERE id = $1 OR parent_id = $1`,
+      [id]
+    );
+    res.json({ message: "Category deactivated" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

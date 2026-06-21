@@ -46,30 +46,20 @@ exports.deleteProduct = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Get all variant IDs for this product
-    const variantRes = await client.query(
-      "SELECT id FROM product_variants WHERE product_id = $1",
-      [id],
+    // Soft delete the product
+    await client.query(
+      "UPDATE products SET is_active = false WHERE id = $1",
+      [id]
     );
-    const variantIds = variantRes.rows.map((r) => r.id);
 
-    if (variantIds.length > 0) {
-      // Delete inventory records for all variants
-      await client.query(
-        "DELETE FROM inventory WHERE variant_id = ANY($1::int[])",
-        [variantIds],
-      );
-      // Delete all variants
-      await client.query("DELETE FROM product_variants WHERE product_id = $1", [
-        id,
-      ]);
-    }
-
-    // Now delete (or soft-delete) the product itself
-    await client.query("DELETE FROM products WHERE id = $1", [id]);
+    // Soft delete all its variants too
+    await client.query(
+      "UPDATE product_variants SET is_active = false WHERE product_id = $1",
+      [id]
+    );
 
     await client.query("COMMIT");
-    res.json({ message: "Product and all variants removed" });
+    res.json({ message: "Product deactivated" });
   } catch (err) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
@@ -114,9 +104,11 @@ exports.updateVariant = async (req, res) => {
 exports.deleteVariant = async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query("DELETE FROM inventory WHERE variant_id = $1", [id]);
-    await pool.query("DELETE FROM product_variants WHERE id = $1", [id]);
-    res.json({ message: "Variant deleted" });
+    await pool.query(
+      "UPDATE product_variants SET is_active = false WHERE id = $1",
+      [id]
+    );
+    res.json({ message: "Variant deactivated" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -176,7 +168,7 @@ exports.getVariants = async (req, res) => {
        FROM product_variants pv
        LEFT JOIN inventory i ON pv.id = i.variant_id
        LEFT JOIN branches b ON i.branch_id = b.id
-       WHERE pv.product_id = $1
+       WHERE pv.product_id = $1 AND pv.is_active = true
        GROUP BY pv.id ORDER BY pv.size, pv.color`,
       [productId],
     );
@@ -199,7 +191,7 @@ exports.scanProduct = async (req, res) => {
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
       LEFT JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2
-      WHERE pv.barcode = $1
+      WHERE pv.barcode = $1 AND pv.is_active = true AND p.is_active = true
     `,
       [barcode.trim(), branchId || 1],
     );
@@ -224,7 +216,7 @@ exports.searchProducts = async (req, res) => {
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
       LEFT JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2
-      WHERE p.is_active = true AND (
+      WHERE p.is_active = true AND pv.is_active = true AND (
         p.name ILIKE $1 OR pv.sku ILIKE $1 OR pv.barcode ILIKE $1
       )
       ORDER BY p.name LIMIT 20
@@ -265,7 +257,7 @@ exports.getProductsByCategoryAndBranch = async (req, res) => {
       query = `
         SELECT DISTINCT p.*
         FROM products p
-        JOIN product_variants pv ON pv.product_id = p.id
+        JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
         JOIN inventory i ON i.variant_id = pv.id 
           AND i.branch_id = $2 
           AND i.is_active = true
@@ -310,7 +302,7 @@ exports.getVariantsByBranch = async (req, res) => {
         FROM product_variants pv
         JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.stock_qty > 0
         JOIN branches b ON b.id = i.branch_id
-        WHERE pv.product_id = $1
+        WHERE pv.product_id = $1 AND pv.is_active = true
         ORDER BY pv.size, pv.color
       `;
       params = [productId, branchId];
@@ -328,7 +320,7 @@ exports.getVariantsByBranch = async (req, res) => {
         FROM product_variants pv
         LEFT JOIN inventory i ON pv.id = i.variant_id
         LEFT JOIN branches b ON i.branch_id = b.id
-        WHERE pv.product_id = $1
+        WHERE pv.product_id = $1 AND pv.is_active = true
         GROUP BY pv.id
         ORDER BY pv.size, pv.color
       `;
