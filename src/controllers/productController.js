@@ -217,14 +217,21 @@ exports.searchProducts = async (req, res) => {
       SELECT p.id AS product_id, p.name, p.base_price,
              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
              COALESCE(pv.variant_price, p.base_price) AS price,
-             COALESCE(i.stock_qty, 0) AS stock_qty
+             COALESCE(i_this.stock_qty, 0) AS stock_qty,
+             COALESCE(i_total.total_stock, 0) AS total_stock
       FROM products p
-      JOIN product_variants pv ON p.id = pv.product_id
-      JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2 AND i.is_active = true
-      WHERE p.is_active = true AND pv.is_active = true AND (
+      JOIN product_variants pv ON p.id = pv.product_id AND pv.is_active = true
+      LEFT JOIN inventory i_this
+        ON pv.id = i_this.variant_id AND i_this.branch_id = $2 AND i_this.is_active = true
+      LEFT JOIN LATERAL (
+        SELECT SUM(stock_qty) AS total_stock
+        FROM inventory
+        WHERE variant_id = pv.id AND is_active = true
+      ) i_total ON true
+      WHERE p.is_active = true AND (
         p.name ILIKE $1 OR pv.sku ILIKE $1 OR pv.barcode ILIKE $1
       )
-      ORDER BY p.name LIMIT 20
+      ORDER BY p.name LIMIT 50
     `,
       [`%${q}%`, branchId || 1],
     );
