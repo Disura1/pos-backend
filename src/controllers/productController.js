@@ -217,12 +217,16 @@ exports.searchProducts = async (req, res) => {
       SELECT p.id AS product_id, p.name, p.base_price,
              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
              COALESCE(pv.variant_price, p.base_price) AS price,
-             COALESCE(i_this.stock_qty, 0) AS stock_qty,
-             COALESCE(i_total.total_stock, 0) AS total_stock
+             COALESCE(i_this.stock_qty, 0)            AS stock_qty,
+             COALESCE(i_total.total_stock, 0)         AS total_stock,
+             -- true only when this branch has an active inventory record for this variant
+             (i_this.id IS NOT NULL)                  AS is_active_here
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id AND pv.is_active = true
       LEFT JOIN inventory i_this
-        ON pv.id = i_this.variant_id AND i_this.branch_id = $2 AND i_this.is_active = true
+        ON pv.id = i_this.variant_id
+        AND i_this.branch_id = $2
+        AND i_this.is_active = true
       LEFT JOIN LATERAL (
         SELECT SUM(stock_qty) AS total_stock
         FROM inventory
@@ -353,22 +357,40 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
   const { branchId, allBranches } = req.query;
   try {
     if (allBranches === "true") {
-      // OWNER VIEW — show stock per branch + total, only counting active rows
+      // Aggregate inventory per product per branch FIRST (via subquery),
+      // then aggregate branches per product — this prevents duplicate branch
+      // rows that appear when a product has multiple variants.
       const result = await pool.query(
         `
-        SELECT p.id AS product_id, p.name, p.base_price, p.description,
-          COALESCE(json_agg(
-            json_build_object(
-              'branch_id', i.branch_id,
-              'branch_name', b.branch_name,
-              'stock_qty', i.stock_qty
-            )
-          ) FILTER (WHERE i.id IS NOT NULL AND i.is_active = true), '[]') AS stock,
-          COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true), 0) AS total_stock
+        SELECT
+          p.id AS product_id,
+          p.name,
+          p.base_price,
+          p.description,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'branch_id',  bs.branch_id,
+                'branch_name', bs.branch_name,
+                'stock_qty',  bs.branch_total
+              )
+              ORDER BY bs.branch_name
+            ) FILTER (WHERE bs.branch_id IS NOT NULL),
+            '[]'
+          ) AS stock,
+          COALESCE(SUM(bs.branch_total), 0) AS total_stock
         FROM products p
-        LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
-        LEFT JOIN inventory i ON i.variant_id = pv.id
-        LEFT JOIN branches b ON b.id = i.branch_id
+        LEFT JOIN LATERAL (
+          SELECT
+            i.branch_id,
+            b.branch_name,
+            SUM(i.stock_qty) AS branch_total
+          FROM product_variants pv
+          JOIN inventory i ON i.variant_id = pv.id AND i.is_active = true
+          JOIN branches b   ON b.id = i.branch_id
+          WHERE pv.product_id = p.id AND pv.is_active = true
+          GROUP BY i.branch_id, b.branch_name
+        ) bs ON true
         WHERE p.category_id = $1 AND p.is_active = true
         GROUP BY p.id
         ORDER BY p.name
@@ -378,14 +400,41 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
       return res.json(result.rows);
     }
 
-    // MANAGER VIEW — show stock for their own branch only, only active rows
+    // MANAGER / BRANCH VIEW — stock for one branch only
     const result = await pool.query(
       `
-      SELECT p.id AS product_id, p.name, p.base_price, p.description,
-        COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true AND i.branch_id = $2), 0) AS branch_stock
+      SELECT
+        p.id AS product_id,
+        p.name,
+        p.base_price,
+        p.description,
+        COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true AND i.branch_id = $2), 0) AS branch_stock,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'branch_id',  bs.branch_id,
+              'branch_name', bs.branch_name,
+              'stock_qty',  bs.branch_total
+            )
+            ORDER BY bs.branch_name
+          ) FILTER (WHERE bs.branch_id IS NOT NULL),
+          '[]'
+        ) AS stock,
+        COALESCE(SUM(bs.branch_total), 0) AS total_stock
       FROM products p
       LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
       LEFT JOIN inventory i ON i.variant_id = pv.id
+      LEFT JOIN LATERAL (
+        SELECT
+          i2.branch_id,
+          b2.branch_name,
+          SUM(i2.stock_qty) AS branch_total
+        FROM product_variants pv2
+        JOIN inventory i2 ON i2.variant_id = pv2.id AND i2.is_active = true
+        JOIN branches b2   ON b2.id = i2.branch_id
+        WHERE pv2.product_id = p.id AND pv2.is_active = true
+        GROUP BY i2.branch_id, b2.branch_name
+      ) bs ON true
       WHERE p.category_id = $1 AND p.is_active = true
       GROUP BY p.id
       ORDER BY p.name
