@@ -214,7 +214,7 @@ exports.searchProducts = async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT p.id AS product_id, p.name, p.base_price,
+      SELECT p.id AS product_id, p.name, p.base_price, p.description,
              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
              COALESCE(pv.variant_price, p.base_price) AS price,
              COALESCE(i_this.stock_qty, 0)            AS stock_qty,
