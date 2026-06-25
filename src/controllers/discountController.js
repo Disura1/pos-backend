@@ -21,6 +21,10 @@ exports.getActiveDiscounts = async (req, res) => {
 exports.createDiscount = async (req, res) => {
   const { name, type, value, min_amount } = req.body;
   try {
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Discount name is required' });
+    if (!['percentage', 'fixed'].includes(type)) return res.status(400).json({ error: 'Type must be percentage or fixed' });
+    if (!value || parseFloat(value) <= 0) return res.status(400).json({ error: 'Discount value must be greater than 0' });
+    if (type === 'percentage' && parseFloat(value) > 100) return res.status(400).json({ error: 'Percentage cannot exceed 100' });
     const result = await pool.query(
       'INSERT INTO discounts (name, type, value, min_amount) VALUES ($1,$2,$3,$4) RETURNING *',
       [name, type, value, min_amount || 0]

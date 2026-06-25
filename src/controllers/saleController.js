@@ -166,12 +166,16 @@ exports.checkout = async (req, res) => {
 };
 
 exports.getHistory = async (req, res) => {
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  // Cashiers and Managers can only view their own branch
+  if (req.user.role === 'Cashier' || req.user.role === 'Manager') {
+    branchId = req.user.branchId;
+  }
   const limit    = parseInt(req.query.limit) || 20;
   const date     = req.query.date || null;
   try {
     const result = await pool.query(`
-      SELECT s.id, s.total_amount,
+      SELECT s.id, s.receipt_number, s.total_amount,
              COALESCE(s.subtotal, s.total_amount)    AS subtotal,
              COALESCE(s.discount_amount, 0)           AS discount_amount,
              COALESCE(s.payment_method, 'cash')       AS payment_method,

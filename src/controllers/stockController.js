@@ -1,7 +1,8 @@
 const pool = require("../config/db");
 
 exports.getInventory = async (req, res) => {
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     const result = await pool.query(
       `
@@ -31,7 +32,8 @@ exports.getInventory = async (req, res) => {
 };
 
 exports.getLowStockAlerts = async (req, res) => {
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     const result = await pool.query(
       `
@@ -42,8 +44,8 @@ exports.getLowStockAlerts = async (req, res) => {
         p.name AS product_name,
         b.branch_name, i.branch_id
       FROM inventory i
-      JOIN product_variants pv ON i.variant_id = pv.id
-      JOIN products p          ON pv.product_id = p.id
+      JOIN product_variants pv ON i.variant_id = pv.id AND pv.is_active = true
+      JOIN products p          ON pv.product_id = p.id AND p.is_active = true
       JOIN branches b          ON i.branch_id   = b.id
       WHERE i.stock_qty <= COALESCE(i.low_stock_threshold, 5)
         AND i.is_active = true
@@ -61,6 +63,9 @@ exports.getLowStockAlerts = async (req, res) => {
 
 exports.receiveStock = async (req, res) => {
   const { variant_id, branch_id, quantity, note } = req.body;
+  if (!quantity || parseInt(quantity) <= 0) {
+    return res.status(400).json({ error: 'Receive quantity must be greater than 0' });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -96,6 +101,9 @@ exports.receiveStock = async (req, res) => {
 
 exports.adjustStock = async (req, res) => {
   const { variant_id, branch_id, new_qty, note } = req.body;
+  if (new_qty === undefined || new_qty === null || isNaN(new_qty) || parseInt(new_qty) < 0) {
+    return res.status(400).json({ error: 'Invalid quantity — must be 0 or greater' });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -108,9 +116,9 @@ exports.adjustStock = async (req, res) => {
 
     await client.query(
       `
-      INSERT INTO inventory (variant_id, branch_id, stock_qty)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (variant_id, branch_id) DO UPDATE SET stock_qty = $3
+      INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active)
+      VALUES ($1, $2, $3, true)
+      ON CONFLICT (variant_id, branch_id) DO UPDATE SET stock_qty = $3, is_active = true
     `,
       [variant_id, branch_id, new_qty],
     );
@@ -136,6 +144,12 @@ exports.adjustStock = async (req, res) => {
 
 exports.transferStock = async (req, res) => {
   const { variant_id, from_branch_id, to_branch_id, quantity, note } = req.body;
+  if (!quantity || parseInt(quantity) <= 0) {
+    return res.status(400).json({ error: 'Transfer quantity must be greater than 0' });
+  }
+  if (from_branch_id === to_branch_id) {
+    return res.status(400).json({ error: 'Source and destination branches cannot be the same' });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -201,7 +215,8 @@ exports.transferStock = async (req, res) => {
 };
 
 exports.getMovements = async (req, res) => {
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   const limit = parseInt(req.query.limit) || 50;
   try {
     const result = await pool.query(

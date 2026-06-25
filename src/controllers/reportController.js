@@ -96,6 +96,16 @@ exports.getDateRangeReport = async (req, res) => {
   const { startDate, endDate } = req.query;
   const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
   try {
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
+    }
+    if (new Date(startDate) > new Date(endDate)) {
+      return res.status(400).json({ error: 'startDate cannot be after endDate' });
+    }
     const summary = await pool.query(`
       SELECT
         COUNT(id)                                        AS total_transactions,

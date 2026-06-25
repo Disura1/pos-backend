@@ -50,6 +50,15 @@ app.get("/api/status", (req, res) =>
   res.json({ message: "Teen Girl POS API is running!" }),
 );
 
+// Global error handler — hide raw DB errors in production
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  const isDev = process.env.NODE_ENV !== 'production';
+  res.status(500).json({
+    error: isDev ? err.message : 'An internal server error occurred',
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () =>
   console.log(`Teen Girl POS Server running on port ${PORT}`),
