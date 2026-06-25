@@ -1,8 +1,7 @@
 const pool = require("../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const JWT_SECRET =
-  process.env.JWT_SECRET || "TeenGirl_Boutique_Security_Key_2026_@789";
+const JWT_SECRET = process.env.JWT_SECRET;
 
 exports.login = async (req, res) => {
   const { username, password } = req.body;
