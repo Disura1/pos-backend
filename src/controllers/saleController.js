@@ -95,7 +95,13 @@ exports.checkout = async (req, res) => {
     const saleId = saleRes.rows[0].id;
 
     // Generate standard receipt number e.g. TGM-000007
-    const receiptNumber = await generateReceiptNumber(client, saleId, branchId);
+    // Use stored prefix from branches table — no need to query all branches
+    const prefixRes = await client.query(
+      'SELECT COALESCE(receipt_prefix, \'TG\') AS prefix FROM branches WHERE id = $1',
+      [branchId]
+    );
+    const prefix = prefixRes.rows[0]?.prefix || 'TG';
+    const receiptNumber = `${prefix}-${String(saleId).padStart(6, '0')}`;
     await client.query(
       'UPDATE sales SET receipt_number = $1 WHERE id = $2',
       [receiptNumber, saleId]

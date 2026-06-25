@@ -22,11 +22,11 @@ exports.getAllBranches = async (req, res) => {
 };
 
 exports.createBranch = async (req, res) => {
-  const { branch_name, address, phone } = req.body;
+  const { branch_name, address, phone, receipt_prefix } = req.body;
   try {
     const result = await pool.query(
-      "INSERT INTO branches (branch_name, address, phone) VALUES ($1, $2, $3) RETURNING *",
-      [branch_name, address || null, phone || null],
+      "INSERT INTO branches (branch_name, address, phone, receipt_prefix) VALUES ($1, $2, $3, $4) RETURNING *",
+      [branch_name, address || null, phone || null, receipt_prefix || null],
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -37,11 +37,11 @@ exports.createBranch = async (req, res) => {
 
 exports.updateBranch = async (req, res) => {
   const { id } = req.params;
-  const { branch_name, address, phone, is_active } = req.body;
+  const { branch_name, address, phone, is_active, receipt_prefix } = req.body;
   try {
     const result = await pool.query(
-      "UPDATE branches SET branch_name=$1, address=$2, phone=$3, is_active=$4 WHERE id=$5 RETURNING *",
-      [branch_name, address || null, phone || null, is_active, id],
+      "UPDATE branches SET branch_name=$1, address=$2, phone=$3, is_active=$4, receipt_prefix=$5 WHERE id=$6 RETURNING *",
+      [branch_name, address || null, phone || null, is_active, receipt_prefix || null, id],
     );
     res.json(result.rows[0]);
   } catch (err) {
