@@ -14,7 +14,10 @@ const reportRoutes   = require('./routes/reportRoutes');
 const discountRoutes = require('./routes/discountRoutes');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:5173', 'app://.' ],
+  credentials: true,
+}));
 app.use(express.json());
 
 app.use('/api/auth',      authRoutes);
