@@ -170,9 +170,11 @@ exports.transferStock = async (req, res) => {
     );
     await client.query(
       `
-      INSERT INTO inventory (variant_id, branch_id, stock_qty)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (variant_id, branch_id) DO UPDATE SET stock_qty = inventory.stock_qty + $3
+      INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active)
+      VALUES ($1, $2, $3, true)
+      ON CONFLICT (variant_id, branch_id) DO UPDATE
+        SET stock_qty = inventory.stock_qty + $3,
+            is_active = true
     `,
       [variant_id, to_branch_id, quantity],
     );
@@ -244,6 +246,9 @@ exports.getMovements = async (req, res) => {
 exports.updateThreshold = async (req, res) => {
   const { variant_id, branch_id, threshold } = req.body;
   try {
+    if (threshold === undefined || threshold === null || isNaN(threshold) || parseInt(threshold) < 1) {
+      return res.status(400).json({ error: 'Threshold must be at least 1' });
+    }
     await pool.query(
       "UPDATE inventory SET low_stock_threshold = $1 WHERE variant_id=$2 AND branch_id=$3",
       [threshold, variant_id, branch_id],
