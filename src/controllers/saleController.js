@@ -57,6 +57,19 @@ const generateReceiptNumber = async (client, saleId, branchId) => {
 
 exports.checkout = async (req, res) => {
   const { cart, subtotal, discountId, discountAmount, total, paymentMethod, amountTendered, branchId, note } = req.body;
+
+  // Input validation
+  if (!Array.isArray(cart) || cart.length === 0)
+    return res.status(400).json({ error: 'Cart is empty' });
+  if (!branchId)
+    return res.status(400).json({ error: 'Branch ID is required' });
+  for (const item of cart) {
+    if (!item.sku || typeof item.sku !== 'string')
+      return res.status(400).json({ error: 'Invalid cart item: missing SKU' });
+    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 9999)
+      return res.status(400).json({ error: `Invalid quantity for ${item.sku}` });
+  }
+
   const cashierId = req.user.id;
   const client = await pool.connect();
   try {
@@ -94,8 +107,16 @@ exports.checkout = async (req, res) => {
       );
       if (!varRes.rows.length) throw new Error(`SKU not found: ${item.sku}`);
       const variantId = varRes.rows[0].id;
-      const qty = item.quantity || 1;
-      const unitPrice = parseFloat(item.variant_price || item.base_price);
+      const qty = item.quantity;
+      // Always use server-side price — never trust client-sent price
+      const priceRes = await client.query(
+        `SELECT COALESCE(pv.variant_price, p.base_price) AS price
+         FROM product_variants pv
+         JOIN products p ON pv.product_id = p.id
+         WHERE pv.id = $1`,
+        [variantId]
+      );
+      const unitPrice = parseFloat(priceRes.rows[0]?.price || 0);
 
       await client.query(
         `INSERT INTO sale_items (sale_id, variant_id, quantity, unit_price, total_price)
