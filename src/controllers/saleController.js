@@ -1,5 +1,60 @@
 const pool = require('../config/db');
 
+// Generate a branch-prefixed receipt number
+// e.g. "TGM-000007" for Main Branch sale #7
+const generateReceiptNumber = async (client, saleId, branchId) => {
+  // Get all active branches to detect prefix collisions
+  const branchRes = await client.query(
+    'SELECT id, branch_name FROM branches WHERE is_active = true ORDER BY id'
+  );
+  const branches = branchRes.rows;
+
+  // Build prefix for each branch — use first letters of words, drop common words
+  const getWords = (name) =>
+    name.toUpperCase()
+      .replace(/\b(BRANCH|STORE|SHOP)\b/g, '')
+      .trim()
+      .split(/[\s\-]+/)
+      .filter(Boolean);
+
+  // First pass: single-letter prefix for each branch
+  const prefixMap = {};
+  for (const b of branches) {
+    const words = getWords(b.branch_name);
+    prefixMap[b.id] = words.map(w => w[0]).join('').slice(0, 3) || 'X';
+  }
+
+  // Detect collisions and extend with extra letters until unique
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const seen = {};
+    for (const b of branches) {
+      const p = prefixMap[b.id];
+      if (!seen[p]) seen[p] = [];
+      seen[p].push(b.id);
+    }
+    for (const [p, ids] of Object.entries(seen)) {
+      if (ids.length > 1) {
+        // Extend each conflicting branch's prefix by one more char
+        for (const id of ids) {
+          const words = getWords(branches.find(b => b.id === id).branch_name);
+          const combined = words.map(w => w).join('');
+          const current = prefixMap[id];
+          if (combined.length > current.length) {
+            prefixMap[id] = combined.slice(0, current.length + 1);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+
+  const branchPrefix = prefixMap[branchId] || 'TG';
+  const paddedId = String(saleId).padStart(6, '0');
+  return `TG${branchPrefix}-${paddedId}`;
+};
+
 exports.checkout = async (req, res) => {
   const { cart, subtotal, discountId, discountAmount, total, paymentMethod, amountTendered, branchId, note } = req.body;
   const cashierId = req.user.id;
@@ -25,6 +80,13 @@ exports.checkout = async (req, res) => {
       ]
     );
     const saleId = saleRes.rows[0].id;
+
+    // Generate standard receipt number e.g. TGM-000007
+    const receiptNumber = await generateReceiptNumber(client, saleId, branchId);
+    await client.query(
+      'UPDATE sales SET receipt_number = $1 WHERE id = $2',
+      [receiptNumber, saleId]
+    );
 
     for (const item of cart) {
       const varRes = await client.query(
@@ -57,7 +119,7 @@ exports.checkout = async (req, res) => {
     await client.query('COMMIT');
 
     const saleDetails = await pool.query(
-      `SELECT s.*, b.branch_name,
+      `SELECT s.*, b.branch_name, b.address AS branch_address, b.phone AS branch_phone,
               COALESCE(u.full_name, u.username) AS cashier_name
        FROM sales s
        JOIN branches b ON s.branch_id = b.id
@@ -66,7 +128,7 @@ exports.checkout = async (req, res) => {
       [saleId]
     );
 
-    res.json({ success: true, saleId, sale: saleDetails.rows[0] });
+    res.json({ success: true, saleId, receiptNumber, sale: saleDetails.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Checkout error:', err.message);
@@ -111,7 +173,7 @@ exports.getSaleDetail = async (req, res) => {
   try {
     const sale = await pool.query(
       `SELECT s.*,
-              b.branch_name,
+              b.branch_name, b.address AS branch_address, b.phone AS branch_phone,
               COALESCE(u.full_name, u.username) AS cashier_name,
               d.name AS discount_name
        FROM sales s
