@@ -62,7 +62,11 @@ exports.getLowStockAlerts = async (req, res) => {
 };
 
 exports.receiveStock = async (req, res) => {
-  const { variant_id, branch_id, quantity, note } = req.body;
+  let { variant_id, branch_id, quantity, note } = req.body;
+  if (req.user.role === 'Manager') branch_id = req.user.branchId;
+  if (!branch_id) {
+    return res.status(400).json({ error: 'Branch ID is required' });
+  }
   if (!quantity || parseInt(quantity) <= 0) {
     return res.status(400).json({ error: 'Receive quantity must be greater than 0' });
   }
@@ -79,7 +83,6 @@ exports.receiveStock = async (req, res) => {
       [variant_id, branch_id, quantity],
     );
 
-    // Insert movement if table exists
     await client.query(
       `
       INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, note, created_by)
@@ -92,15 +95,19 @@ exports.receiveStock = async (req, res) => {
     res.json({ message: "Stock received successfully" });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("receiveStock error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("receiveStock error:", err);
+    res.status(500).json({ error: "Could not receive stock. Please try again." });
   } finally {
     client.release();
   }
 };
 
 exports.adjustStock = async (req, res) => {
-  const { variant_id, branch_id, new_qty, note } = req.body;
+  let { variant_id, branch_id, new_qty, note } = req.body;
+  if (req.user.role === 'Manager') branch_id = req.user.branchId;
+  if (!branch_id) {
+    return res.status(400).json({ error: 'Branch ID is required' });
+  }
   if (new_qty === undefined || new_qty === null || isNaN(new_qty) || parseInt(new_qty) < 0) {
     return res.status(400).json({ error: 'Invalid quantity — must be 0 or greater' });
   }
@@ -135,15 +142,20 @@ exports.adjustStock = async (req, res) => {
     res.json({ message: "Stock adjusted successfully" });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("adjustStock error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("adjustStock error:", err);
+    res.status(500).json({ error: "Could not adjust stock. Please try again." });
   } finally {
     client.release();
   }
 };
 
 exports.transferStock = async (req, res) => {
-  const { variant_id, from_branch_id, to_branch_id, quantity, note } = req.body;
+  let { variant_id, from_branch_id, to_branch_id, quantity, note } = req.body;
+  // Managers can only transfer OUT of their own branch — destination can be anywhere
+  if (req.user.role === 'Manager') from_branch_id = req.user.branchId;
+  if (!from_branch_id) {
+    return res.status(400).json({ error: 'Source branch is required' });
+  }
   if (!quantity || parseInt(quantity) <= 0) {
     return res.status(400).json({ error: 'Transfer quantity must be greater than 0' });
   }
@@ -209,8 +221,8 @@ exports.transferStock = async (req, res) => {
     res.json({ message: "Transfer completed successfully" });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("transferStock error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("transferStock error:", err);
+    res.status(500).json({ error: "Could not complete transfer. Please try again." });
   } finally {
     client.release();
   }
@@ -244,8 +256,12 @@ exports.getMovements = async (req, res) => {
 };
 
 exports.updateThreshold = async (req, res) => {
-  const { variant_id, branch_id, threshold } = req.body;
+  let { variant_id, branch_id, threshold } = req.body;
+  if (req.user.role === 'Manager') branch_id = req.user.branchId;
   try {
+    if (!branch_id) {
+      return res.status(400).json({ error: 'Branch ID is required' });
+    }
     if (threshold === undefined || threshold === null || isNaN(threshold) || parseInt(threshold) < 1) {
       return res.status(400).json({ error: 'Threshold must be at least 1' });
     }
@@ -255,7 +271,7 @@ exports.updateThreshold = async (req, res) => {
     );
     res.json({ message: "Threshold updated" });
   } catch (err) {
-    console.error("updateThreshold error:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error("updateThreshold error:", err);
+    res.status(500).json({ error: "Could not update threshold. Please try again." });
   }
 };

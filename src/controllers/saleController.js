@@ -3,10 +3,7 @@ const pool = require("../config/db");
 exports.checkout = async (req, res) => {
   const {
     cart,
-    subtotal,
     discountId,
-    discountAmount,
-    total,
     paymentMethod,
     amountTendered,
     branchId,
@@ -48,16 +45,63 @@ exports.checkout = async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Validate discount if provided
-    if (discountId) {
-      const discCheck = await client.query(
-        'SELECT id FROM discounts WHERE id = $1 AND is_active = true',
-        [discountId]
+    // ---- 1. Look up each item's real price/variant FIRST, before creating the sale ----
+    const priced = [];
+    for (const item of cart) {
+      const varRes = await client.query(
+        `SELECT pv.id AS variant_id,
+                COALESCE(pv.variant_price, p.base_price) AS price
+         FROM product_variants pv
+         JOIN products p ON pv.product_id = p.id
+         WHERE pv.sku = $1 AND pv.is_active = true`,
+        [item.sku],
       );
-      if (!discCheck.rows.length) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Invalid or inactive discount' });
+      if (!varRes.rows.length) {
+        const e = new Error(`SKU not found: ${item.sku}`);
+        e.status = 400;
+        throw e;
       }
+      const variantId = varRes.rows[0].variant_id;
+      const unitPrice = parseFloat(varRes.rows[0].price || 0);
+      priced.push({ sku: item.sku, variantId, qty: item.quantity, unitPrice });
+    }
+
+    // ---- 2. Server computes subtotal — never trust the client's number ----
+    const subtotal = priced.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
+
+    // ---- 3. Server computes the discount from the real discount row ----
+    let discountAmount = 0;
+    let safeDiscountId = null;
+    if (discountId) {
+      const discRes = await client.query(
+        'SELECT id, type, value, min_amount FROM discounts WHERE id = $1 AND is_active = true',
+        [discountId],
+      );
+      if (!discRes.rows.length) {
+        const e = new Error('Invalid or inactive discount');
+        e.status = 400;
+        throw e;
+      }
+      const disc = discRes.rows[0];
+      if (subtotal < parseFloat(disc.min_amount || 0)) {
+        const e = new Error(`Order must be at least ${disc.min_amount} to use this discount`);
+        e.status = 400;
+        throw e;
+      }
+      discountAmount = disc.type === 'percentage'
+        ? (subtotal * parseFloat(disc.value)) / 100
+        : Math.min(parseFloat(disc.value), subtotal);
+      safeDiscountId = disc.id;
+    }
+
+    const total = Math.max(0, subtotal - discountAmount);
+
+    // ---- 4. Validate cash payment covers the (server-computed) total ----
+    const tendered = parseFloat(amountTendered || total);
+    if (paymentMethod === 'cash' && tendered < total) {
+      const e = new Error('Amount tendered is less than total');
+      e.status = 400;
+      throw e;
     }
 
     const saleRes = await client.query(
@@ -68,20 +112,19 @@ exports.checkout = async (req, res) => {
       [
         safeBranchId,
         cashierId,
-        subtotal || total,
-        discountId || null,
-        discountAmount || 0,
+        subtotal,
+        safeDiscountId,
+        discountAmount,
         total,
         paymentMethod || "cash",
-        amountTendered || total,
-        Math.max(0, (amountTendered || total) - total),
+        tendered,
+        Math.max(0, tendered - total),
         note || null,
       ],
     );
     const saleId = saleRes.rows[0].id;
 
     // Generate standard receipt number e.g. TGM-000007
-    // Use stored prefix from branches table — no need to query all branches
     const prefixRes = await client.query(
       "SELECT COALESCE(receipt_prefix, 'TG') AS prefix FROM branches WHERE id = $1",
       [safeBranchId],
@@ -93,28 +136,11 @@ exports.checkout = async (req, res) => {
       saleId,
     ]);
 
-    for (const item of cart) {
-      const varRes = await client.query(
-        "SELECT id FROM product_variants WHERE sku = $1",
-        [item.sku],
-      );
-      if (!varRes.rows.length) throw new Error(`SKU not found: ${item.sku}`);
-      const variantId = varRes.rows[0].id;
-      const qty = item.quantity;
-      // Always use server-side price — never trust client-sent price
-      const priceRes = await client.query(
-        `SELECT COALESCE(pv.variant_price, p.base_price) AS price
-         FROM product_variants pv
-         JOIN products p ON pv.product_id = p.id
-         WHERE pv.id = $1`,
-        [variantId],
-      );
-      const unitPrice = parseFloat(priceRes.rows[0]?.price || 0);
-
+    for (const item of priced) {
       await client.query(
         `INSERT INTO sale_items (sale_id, variant_id, quantity, unit_price, total_price)
          VALUES ($1,$2,$3,$4,$5)`,
-        [saleId, variantId, qty, unitPrice, unitPrice * qty],
+        [saleId, item.variantId, item.qty, item.unitPrice, item.unitPrice * item.qty],
       );
 
       // Lock the inventory row and check stock before deducting
@@ -122,22 +148,24 @@ exports.checkout = async (req, res) => {
         `SELECT stock_qty FROM inventory
          WHERE variant_id = $1 AND branch_id = $2
          FOR UPDATE`,
-        [variantId, safeBranchId],
+        [item.variantId, safeBranchId],
       );
       const availableQty = stockCheck.rows[0]?.stock_qty || 0;
-      if (availableQty < qty) {
-        throw new Error(`Insufficient stock for item "${item.sku}"`);
+      if (availableQty < item.qty) {
+        const e = new Error(`Insufficient stock for item "${item.sku}"`);
+        e.status = 400;
+        throw e;
       }
       await client.query(
         `UPDATE inventory SET stock_qty = stock_qty - $1
          WHERE variant_id=$2 AND branch_id=$3`,
-        [qty, variantId, safeBranchId],
+        [item.qty, item.variantId, safeBranchId],
       );
 
       await client.query(
         `INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, reference_id, created_by)
          VALUES ($1,$2,'sale',$3,$4,$5)`,
-        [variantId, safeBranchId, -qty, saleId, cashierId],
+        [item.variantId, safeBranchId, -item.qty, saleId, cashierId],
       );
     }
 
@@ -161,8 +189,12 @@ exports.checkout = async (req, res) => {
     });
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Checkout error:", err.message);
-    res.status(500).json({ error: "Checkout failed: " + err.message });
+    console.error("Checkout error:", err);
+    // err.status is set for expected/validation errors above — safe to show.
+    // Anything else is an unexpected DB/server error — hide the details.
+    res.status(err.status || 500).json({
+      error: err.status ? err.message : "Checkout failed. Please try again.",
+    });
   } finally {
     client.release();
   }
