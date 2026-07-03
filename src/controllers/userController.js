@@ -50,8 +50,10 @@ exports.updateUser = async (req, res) => {
     const result = await pool.query(
       `UPDATE users SET full_name=$1, role_id=$2, branch_id=$3, is_active=$4
        WHERE id=$5 RETURNING id, username, full_name, role_id, branch_id, is_active`,
-      [full_name, role_id, branch_id || null, is_active, id],
+      [full_name, role_id, branch_id || null, is_active, parseInt(id)],
     );
+    if (!result.rows.length)
+      return res.status(404).json({ error: 'User not found' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -62,15 +64,17 @@ exports.resetUserPassword = async (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 6)
-    return res
-      .status(400)
-      .json({ error: "Password must be at least 6 characters" });
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
+  if (!id || isNaN(parseInt(id)))
+    return res.status(400).json({ error: "Invalid user ID" });
   try {
     const hash = await bcrypt.hash(newPassword, 10);
-    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
-      hash,
-      id,
-    ]);
+    const result = await pool.query(
+      "UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id",
+      [hash, id]
+    );
+    if (!result.rows.length)
+      return res.status(404).json({ error: "User not found" });
     res.json({ message: "Password reset successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });

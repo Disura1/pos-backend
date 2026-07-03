@@ -4,7 +4,7 @@ exports.getProductsByCategory = async (req, res) => {
   const { categoryId } = req.params;
   try {
     const result = await pool.query(
-      "SELECT * FROM products WHERE category_id = $1 AND is_active = true ORDER BY name",
+      "SELECT id, name, description, base_price, category_id FROM products WHERE category_id = $1 AND is_active = true ORDER BY name",
       [categoryId],
     );
     res.json(result.rows);
@@ -208,7 +208,9 @@ exports.getVariants = async (req, res) => {
 
 exports.scanProduct = async (req, res) => {
   const { barcode } = req.params;
-  const { branchId } = req.query;
+  // Cashiers can only scan their own branch
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Cashier') branchId = req.user.branchId;
   if (!barcode || !barcode.trim()) {
     return res.status(400).json({ error: 'Barcode is required' });
   }
@@ -236,7 +238,10 @@ exports.scanProduct = async (req, res) => {
 };
 
 exports.searchProducts = async (req, res) => {
-  const { q, branchId } = req.query;
+  const { q } = req.query;
+  // Cashiers can only search their own branch
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Cashier') branchId = req.user.branchId;
   try {
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ error: 'Search query must be at least 2 characters' });

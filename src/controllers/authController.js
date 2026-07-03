@@ -10,7 +10,7 @@ exports.login = async (req, res) => {
     if (!password) return res.status(400).json({ error: 'Password is required' });
     const result = await pool.query(
       `SELECT u.id, u.username, u.password_hash, u.full_name, u.branch_id,
-              r.role_name, b.branch_name
+              u.is_active, r.role_name, b.branch_name
        FROM users u
        JOIN roles r ON u.role_id = r.id
        LEFT JOIN branches b ON u.branch_id = b.id
