@@ -8,13 +8,15 @@ const {
   hardDeleteBranch,
   getBranchStats,
 } = require("../controllers/branchController");
-const { authenticate } = require("../middleware/auth");
+const { authenticate, authorize } = require("../middleware/auth");
 
-router.get("/", authenticate, getAllBranches);
-router.post("/", authenticate, createBranch);
-router.put("/:id", authenticate, updateBranch);
-router.delete("/:id", authenticate, deleteBranch); // deactivate
-router.delete("/:id/hard", authenticate, hardDeleteBranch); // permanent delete
-router.get("/:id/stats", authenticate, getBranchStats);
+const isOwner = authorize("Owner", "Admin");
+
+router.get("/",             authenticate,          getAllBranches);
+router.post("/",            authenticate, isOwner, createBranch);
+router.put("/:id",          authenticate, isOwner, updateBranch);
+router.delete("/:id",       authenticate, isOwner, deleteBranch);
+router.delete("/:id/hard",  authenticate, isOwner, hardDeleteBranch);
+router.get("/:id/stats",    authenticate,          getBranchStats);
 
 module.exports = router;

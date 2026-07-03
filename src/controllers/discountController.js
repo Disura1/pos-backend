@@ -39,6 +39,11 @@ exports.updateDiscount = async (req, res) => {
   const { id } = req.params;
   const { name, type, value, min_amount, is_active } = req.body;
   try {
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Discount name is required' });
+    if (!['percentage', 'fixed'].includes(type)) return res.status(400).json({ error: 'Type must be percentage or fixed' });
+    if (!value || parseFloat(value) <= 0) return res.status(400).json({ error: 'Discount value must be greater than 0' });
+    if (type === 'percentage' && parseFloat(value) > 100) return res.status(400).json({ error: 'Percentage cannot exceed 100' });
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid discount ID' });
     const result = await pool.query(
       'UPDATE discounts SET name=$1,type=$2,value=$3,min_amount=$4,is_active=$5 WHERE id=$6 RETURNING *',
       [name, type, value, min_amount, is_active, id]

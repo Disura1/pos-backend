@@ -1,7 +1,8 @@
 const pool = require('../config/db');
 
 exports.getDailySummary = async (req, res) => {
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     const result = await pool.query(`
       SELECT
@@ -21,8 +22,9 @@ exports.getDailySummary = async (req, res) => {
 };
 
 exports.getRevenueByPeriod = async (req, res) => {
-  const days     = parseInt(req.query.days)     || 7;
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  const days = Math.min(parseInt(req.query.days) || 7, 365); // cap at 1 year
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     const result = await pool.query(`
       SELECT
@@ -43,9 +45,10 @@ exports.getRevenueByPeriod = async (req, res) => {
 };
 
 exports.getTopProducts = async (req, res) => {
-  const days     = parseInt(req.query.days)     || 30;
-  const limit    = parseInt(req.query.limit)    || 10;
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  const days     = Math.min(parseInt(req.query.days)  || 30, 365);
+  const limit    = Math.min(parseInt(req.query.limit) || 10, 50);
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     const result = await pool.query(`
       SELECT
@@ -94,7 +97,8 @@ exports.getBranchComparison = async (req, res) => {
 
 exports.getDateRangeReport = async (req, res) => {
   const { startDate, endDate } = req.query;
-  const branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === 'Manager') branchId = req.user.branchId;
   try {
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate and endDate are required' });
