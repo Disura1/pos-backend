@@ -237,7 +237,7 @@ exports.getHistory = async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("getHistory error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -282,6 +282,6 @@ exports.getSaleDetail = async (req, res) => {
     res.json({ ...sale.rows[0], items: items.rows });
   } catch (err) {
     console.error("getSaleDetail error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
