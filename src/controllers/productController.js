@@ -16,6 +16,9 @@ exports.getProductsByCategory = async (req, res) => {
 exports.createProduct = async (req, res) => {
   const { name, description, base_price, category_id, main_image } = req.body;
   try {
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Product name is required' });
+    if (!base_price || parseFloat(base_price) <= 0) return res.status(400).json({ error: 'Base price must be greater than 0' });
+    if (!category_id) return res.status(400).json({ error: 'Category is required' });
     const result = await pool.query(
       "INSERT INTO products (name, description, base_price, category_id, main_image) VALUES ($1,$2,$3,$4,$5) RETURNING *",
       [name, description, base_price, category_id, main_image || null],
@@ -30,6 +33,8 @@ exports.updateProduct = async (req, res) => {
   const { id } = req.params;
   const { name, description, base_price, main_image } = req.body;
   try {
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Product name is required' });
+    if (!base_price || parseFloat(base_price) <= 0) return res.status(400).json({ error: 'Base price must be greater than 0' });
     const result = await pool.query(
       "UPDATE products SET name=$1,description=$2,base_price=$3,main_image=$4 WHERE id=$5 RETURNING *",
       [name, description, base_price, main_image, id],
@@ -72,6 +77,8 @@ exports.updateVariant = async (req, res) => {
   const { id } = req.params;
   const { sku, size, color, barcode, variant_price } = req.body;
   try {
+    if (!sku || !sku.trim()) return res.status(400).json({ error: 'SKU is required' });
+    if (!barcode || !barcode.trim()) return res.status(400).json({ error: 'Barcode is required' });
     // Duplicate SKU check (exclude self)
     const skuCheck = await pool.query(
       "SELECT id FROM product_variants WHERE sku = $1 AND id != $2",
@@ -119,6 +126,18 @@ exports.addVariant = async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (!sku || !sku.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'SKU is required' });
+    }
+    if (!barcode || !barcode.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Barcode is required' });
+    }
+    if (!product_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Product ID is required' });
+    }
 
     // Duplicate SKU check (global — across all products)
     const skuCheck = await client.query(
@@ -212,6 +231,9 @@ exports.scanProduct = async (req, res) => {
 exports.searchProducts = async (req, res) => {
   const { q, branchId } = req.query;
   try {
+    if (!q || q.trim().length < 2) {
+      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+    }
     const result = await pool.query(
       `
       SELECT p.id AS product_id, p.name, p.base_price, p.description,

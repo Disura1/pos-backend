@@ -147,7 +147,7 @@ exports.transferStock = async (req, res) => {
   if (!quantity || parseInt(quantity) <= 0) {
     return res.status(400).json({ error: 'Transfer quantity must be greater than 0' });
   }
-  if (from_branch_id === to_branch_id) {
+  if (parseInt(from_branch_id) === parseInt(to_branch_id)) {
     return res.status(400).json({ error: 'Source and destination branches cannot be the same' });
   }
   const client = await pool.connect();

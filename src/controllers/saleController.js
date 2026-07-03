@@ -93,6 +93,17 @@ exports.checkout = async (req, res) => {
         [saleId, variantId, qty, unitPrice, unitPrice * qty],
       );
 
+      // Lock the inventory row and check stock before deducting
+      const stockCheck = await client.query(
+        `SELECT stock_qty FROM inventory
+         WHERE variant_id = $1 AND branch_id = $2
+         FOR UPDATE`,
+        [variantId, branchId],
+      );
+      const availableQty = stockCheck.rows[0]?.stock_qty || 0;
+      if (availableQty < qty) {
+        throw new Error(`Insufficient stock for item "${item.sku}"`);
+      }
       await client.query(
         `UPDATE inventory SET stock_qty = stock_qty - $1
          WHERE variant_id=$2 AND branch_id=$3`,
@@ -139,7 +150,7 @@ exports.getHistory = async (req, res) => {
   if (req.user.role === "Cashier" || req.user.role === "Manager") {
     branchId = req.user.branchId;
   }
-  const limit = parseInt(req.query.limit) || 20;
+  const limit = Math.min(parseInt(req.query.limit) || 20, 500); // cap at 500
   const date = req.query.date || null;
   try {
     const result = await pool.query(
@@ -175,7 +186,7 @@ exports.getSaleDetail = async (req, res) => {
   try {
     // Validate ID is a number to prevent unexpected queries
     if (!id || isNaN(parseInt(id))) {
-      return res.status(400).json({ error: 'Invalid sale ID' });
+      return res.status(400).json({ error: "Invalid sale ID" });
     }
     const sale = await pool.query(
       `SELECT s.*,
@@ -203,9 +214,9 @@ exports.getSaleDetail = async (req, res) => {
       return res.status(404).json({ error: "Sale not found" });
     // Cashiers and Managers can only view sales from their own branch
     const saleData = sale.rows[0];
-    if (req.user.role === 'Cashier' || req.user.role === 'Manager') {
+    if (req.user.role === "Cashier" || req.user.role === "Manager") {
       if (saleData.branch_id !== req.user.branchId) {
-        return res.status(403).json({ error: 'Access denied' });
+        return res.status(403).json({ error: "Access denied" });
       }
     }
     res.json({ ...sale.rows[0], items: items.rows });
