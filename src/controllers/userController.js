@@ -13,7 +13,8 @@ exports.getAllUsers = async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -35,9 +36,10 @@ exports.createUser = async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
+    console.error(err);
     if (err.code === "23505")
       return res.status(400).json({ error: "Username already exists" });
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -45,17 +47,25 @@ exports.updateUser = async (req, res) => {
   const { id } = req.params;
   const { full_name, role_id, branch_id, is_active } = req.body;
   try {
-    if (!role_id) return res.status(400).json({ error: 'Role is required' });
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid user ID' });
+    if (!role_id) return res.status(400).json({ error: "Role is required" });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid user ID" });
     // Prevent user from deactivating their own account
     if (req.user.id === parseInt(id) && is_active === false) {
-      return res.status(400).json({ error: 'You cannot deactivate your own account' });
+      return res
+        .status(400)
+        .json({ error: "You cannot deactivate your own account" });
     }
     // Prevent user from changing their own role
     if (req.user.id === parseInt(id)) {
-      const currentRole = await pool.query('SELECT role_id FROM users WHERE id = $1', [id]);
+      const currentRole = await pool.query(
+        "SELECT role_id FROM users WHERE id = $1",
+        [id],
+      );
       if (currentRole.rows[0]?.role_id !== parseInt(role_id)) {
-        return res.status(400).json({ error: 'You cannot change your own role' });
+        return res
+          .status(400)
+          .json({ error: "You cannot change your own role" });
       }
     }
     const result = await pool.query(
@@ -64,10 +74,11 @@ exports.updateUser = async (req, res) => {
       [full_name, role_id, branch_id || null, is_active, parseInt(id)],
     );
     if (!result.rows.length)
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -75,20 +86,23 @@ exports.resetUserPassword = async (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
   if (!newPassword || newPassword.length < 6)
-    return res.status(400).json({ error: "Password must be at least 6 characters" });
+    return res
+      .status(400)
+      .json({ error: "Password must be at least 6 characters" });
   if (!id || isNaN(parseInt(id)))
     return res.status(400).json({ error: "Invalid user ID" });
   try {
     const hash = await bcrypt.hash(newPassword, 10);
     const result = await pool.query(
       "UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id",
-      [hash, id]
+      [hash, id],
     );
     if (!result.rows.length)
       return res.status(404).json({ error: "User not found" });
     res.json({ message: "Password reset successfully" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -97,6 +111,7 @@ exports.getRoles = async (req, res) => {
     const result = await pool.query("SELECT * FROM roles ORDER BY id");
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };

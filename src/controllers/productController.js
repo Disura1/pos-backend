@@ -9,23 +9,30 @@ exports.getProductsByCategory = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.createProduct = async (req, res) => {
   const { name, description, base_price, category_id, main_image } = req.body;
   try {
-    if (!name || !name.trim()) return res.status(400).json({ error: 'Product name is required' });
-    if (!base_price || parseFloat(base_price) <= 0) return res.status(400).json({ error: 'Base price must be greater than 0' });
-    if (!category_id) return res.status(400).json({ error: 'Category is required' });
+    if (!name || !name.trim())
+      return res.status(400).json({ error: "Product name is required" });
+    if (!base_price || parseFloat(base_price) <= 0)
+      return res
+        .status(400)
+        .json({ error: "Base price must be greater than 0" });
+    if (!category_id)
+      return res.status(400).json({ error: "Category is required" });
     const result = await pool.query(
       "INSERT INTO products (name, description, base_price, category_id, main_image) VALUES ($1,$2,$3,$4,$5) RETURNING *",
       [name, description, base_price, category_id, main_image || null],
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -33,17 +40,30 @@ exports.updateProduct = async (req, res) => {
   const { id } = req.params;
   const { name, description, base_price, main_image } = req.body;
   try {
-    if (!name || !name.trim()) return res.status(400).json({ error: 'Product name is required' });
-    if (!base_price || parseFloat(base_price) <= 0) return res.status(400).json({ error: 'Base price must be greater than 0' });
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid product ID' });
+    if (!name || !name.trim())
+      return res.status(400).json({ error: "Product name is required" });
+    if (!base_price || parseFloat(base_price) <= 0)
+      return res
+        .status(400)
+        .json({ error: "Base price must be greater than 0" });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid product ID" });
     const result = await pool.query(
       "UPDATE products SET name=$1, description=$2, base_price=$3, main_image=COALESCE($4, main_image) WHERE id=$5 RETURNING *",
-      [name, description || null, parseFloat(base_price), main_image || null, parseInt(id)],
+      [
+        name,
+        description || null,
+        parseFloat(base_price),
+        main_image || null,
+        parseInt(id),
+      ],
     );
-    if (!result.rows.length) return res.status(404).json({ error: 'Product not found' });
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Product not found" });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -54,22 +74,22 @@ exports.deleteProduct = async (req, res) => {
     await client.query("BEGIN");
 
     // Soft delete the product
-    await client.query(
-      "UPDATE products SET is_active = false WHERE id = $1",
-      [id]
-    );
+    await client.query("UPDATE products SET is_active = false WHERE id = $1", [
+      id,
+    ]);
 
     // Soft delete all its variants too
     await client.query(
       "UPDATE product_variants SET is_active = false WHERE product_id = $1",
-      [id]
+      [id],
     );
 
     await client.query("COMMIT");
     res.json({ message: "Product deactivated" });
   } catch (err) {
+    console.error(err);
     await client.query("ROLLBACK");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   } finally {
     client.release();
   }
@@ -79,8 +99,10 @@ exports.updateVariant = async (req, res) => {
   const { id } = req.params;
   const { sku, size, color, barcode, variant_price } = req.body;
   try {
-    if (!sku || !sku.trim()) return res.status(400).json({ error: 'SKU is required' });
-    if (!barcode || !barcode.trim()) return res.status(400).json({ error: 'Barcode is required' });
+    if (!sku || !sku.trim())
+      return res.status(400).json({ error: "SKU is required" });
+    if (!barcode || !barcode.trim())
+      return res.status(400).json({ error: "Barcode is required" });
     // Duplicate SKU check (exclude self)
     const skuCheck = await pool.query(
       "SELECT id FROM product_variants WHERE sku = $1 AND id != $2",
@@ -106,41 +128,46 @@ exports.updateVariant = async (req, res) => {
     );
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.deleteVariant = async (req, res) => {
   const { id } = req.params;
   try {
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid variant ID' });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid variant ID" });
     const result = await pool.query(
       "UPDATE product_variants SET is_active = false WHERE id = $1 RETURNING id",
-      [id]
+      [id],
     );
-    if (!result.rows.length) return res.status(404).json({ error: 'Variant not found' });
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Variant not found" });
     res.json({ message: "Variant deactivated" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.addVariant = async (req, res) => {
-  const { product_id, sku, size, color, barcode, variant_price, branch_id } = req.body;
+  const { product_id, sku, size, color, barcode, variant_price, branch_id } =
+    req.body;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     if (!sku || !sku.trim()) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'SKU is required' });
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "SKU is required" });
     }
     if (!barcode || !barcode.trim()) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Barcode is required' });
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Barcode is required" });
     }
     if (!product_id) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Product ID is required' });
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "Product ID is required" });
     }
 
     // Duplicate SKU check (global — across all products)
@@ -181,8 +208,9 @@ exports.addVariant = async (req, res) => {
     await client.query("COMMIT");
     res.json(result.rows[0]);
   } catch (err) {
+    console.error(err);
     await client.query("ROLLBACK");
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   } finally {
     client.release();
   }
@@ -202,7 +230,8 @@ exports.getVariants = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -210,9 +239,9 @@ exports.scanProduct = async (req, res) => {
   const { barcode } = req.params;
   // Cashiers can only scan their own branch
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Cashier') branchId = req.user.branchId;
+  if (req.user.role === "Cashier") branchId = req.user.branchId;
   if (!barcode || !barcode.trim()) {
-    return res.status(400).json({ error: 'Barcode is required' });
+    return res.status(400).json({ error: "Barcode is required" });
   }
   try {
     const result = await pool.query(
@@ -230,10 +259,11 @@ exports.scanProduct = async (req, res) => {
       [barcode.trim(), branchId ? parseInt(branchId) : null],
     );
     if (result.rows.length === 0)
-      return res.status(404).json({ message: 'Product not found' });
+      return res.status(404).json({ message: "Product not found" });
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -241,10 +271,12 @@ exports.searchProducts = async (req, res) => {
   const { q } = req.query;
   // Cashiers can only search their own branch
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Cashier') branchId = req.user.branchId;
+  if (req.user.role === "Cashier") branchId = req.user.branchId;
   try {
     if (!q || q.trim().length < 2) {
-      return res.status(400).json({ error: 'Search query must be at least 2 characters' });
+      return res
+        .status(400)
+        .json({ error: "Search query must be at least 2 characters" });
     }
     const result = await pool.query(
       `
@@ -275,7 +307,8 @@ exports.searchProducts = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -291,7 +324,8 @@ exports.getAllProducts = async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -328,7 +362,8 @@ exports.getProductsByCategoryAndBranch = async (req, res) => {
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -380,7 +415,8 @@ exports.getVariantsByBranch = async (req, res) => {
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -477,6 +513,7 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };

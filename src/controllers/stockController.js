@@ -2,7 +2,7 @@ const pool = require("../config/db");
 
 exports.getInventory = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
     const result = await pool.query(
       `
@@ -27,13 +27,13 @@ exports.getInventory = async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("getInventory error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.getLowStockAlerts = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
     const result = await pool.query(
       `
@@ -57,18 +57,20 @@ exports.getLowStockAlerts = async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("getLowStockAlerts error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.receiveStock = async (req, res) => {
   let { variant_id, branch_id, quantity, note } = req.body;
-  if (req.user.role === 'Manager') branch_id = req.user.branchId;
+  if (req.user.role === "Manager") branch_id = req.user.branchId;
   if (!branch_id) {
-    return res.status(400).json({ error: 'Branch ID is required' });
+    return res.status(400).json({ error: "Branch ID is required" });
   }
   if (!quantity || parseInt(quantity) <= 0) {
-    return res.status(400).json({ error: 'Receive quantity must be greater than 0' });
+    return res
+      .status(400)
+      .json({ error: "Receive quantity must be greater than 0" });
   }
   const client = await pool.connect();
   try {
@@ -96,7 +98,9 @@ exports.receiveStock = async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("receiveStock error:", err);
-    res.status(500).json({ error: "Could not receive stock. Please try again." });
+    res
+      .status(500)
+      .json({ error: "Could not receive stock. Please try again." });
   } finally {
     client.release();
   }
@@ -104,12 +108,19 @@ exports.receiveStock = async (req, res) => {
 
 exports.adjustStock = async (req, res) => {
   let { variant_id, branch_id, new_qty, note } = req.body;
-  if (req.user.role === 'Manager') branch_id = req.user.branchId;
+  if (req.user.role === "Manager") branch_id = req.user.branchId;
   if (!branch_id) {
-    return res.status(400).json({ error: 'Branch ID is required' });
+    return res.status(400).json({ error: "Branch ID is required" });
   }
-  if (new_qty === undefined || new_qty === null || isNaN(new_qty) || parseInt(new_qty) < 0) {
-    return res.status(400).json({ error: 'Invalid quantity — must be 0 or greater' });
+  if (
+    new_qty === undefined ||
+    new_qty === null ||
+    isNaN(new_qty) ||
+    parseInt(new_qty) < 0
+  ) {
+    return res
+      .status(400)
+      .json({ error: "Invalid quantity — must be 0 or greater" });
   }
   const client = await pool.connect();
   try {
@@ -143,7 +154,9 @@ exports.adjustStock = async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("adjustStock error:", err);
-    res.status(500).json({ error: "Could not adjust stock. Please try again." });
+    res
+      .status(500)
+      .json({ error: "Could not adjust stock. Please try again." });
   } finally {
     client.release();
   }
@@ -152,15 +165,19 @@ exports.adjustStock = async (req, res) => {
 exports.transferStock = async (req, res) => {
   let { variant_id, from_branch_id, to_branch_id, quantity, note } = req.body;
   // Managers can only transfer OUT of their own branch — destination can be anywhere
-  if (req.user.role === 'Manager') from_branch_id = req.user.branchId;
+  if (req.user.role === "Manager") from_branch_id = req.user.branchId;
   if (!from_branch_id) {
-    return res.status(400).json({ error: 'Source branch is required' });
+    return res.status(400).json({ error: "Source branch is required" });
   }
   if (!quantity || parseInt(quantity) <= 0) {
-    return res.status(400).json({ error: 'Transfer quantity must be greater than 0' });
+    return res
+      .status(400)
+      .json({ error: "Transfer quantity must be greater than 0" });
   }
   if (parseInt(from_branch_id) === parseInt(to_branch_id)) {
-    return res.status(400).json({ error: 'Source and destination branches cannot be the same' });
+    return res
+      .status(400)
+      .json({ error: "Source and destination branches cannot be the same" });
   }
   const client = await pool.connect();
   try {
@@ -222,7 +239,9 @@ exports.transferStock = async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("transferStock error:", err);
-    res.status(500).json({ error: "Could not complete transfer. Please try again." });
+    res
+      .status(500)
+      .json({ error: "Could not complete transfer. Please try again." });
   } finally {
     client.release();
   }
@@ -230,7 +249,7 @@ exports.transferStock = async (req, res) => {
 
 exports.getMovements = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   const limit = parseInt(req.query.limit) || 50;
   try {
     const result = await pool.query(
@@ -251,19 +270,24 @@ exports.getMovements = async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("getMovements error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.updateThreshold = async (req, res) => {
   let { variant_id, branch_id, threshold } = req.body;
-  if (req.user.role === 'Manager') branch_id = req.user.branchId;
+  if (req.user.role === "Manager") branch_id = req.user.branchId;
   try {
     if (!branch_id) {
-      return res.status(400).json({ error: 'Branch ID is required' });
+      return res.status(400).json({ error: "Branch ID is required" });
     }
-    if (threshold === undefined || threshold === null || isNaN(threshold) || parseInt(threshold) < 1) {
-      return res.status(400).json({ error: 'Threshold must be at least 1' });
+    if (
+      threshold === undefined ||
+      threshold === null ||
+      isNaN(threshold) ||
+      parseInt(threshold) < 1
+    ) {
+      return res.status(400).json({ error: "Threshold must be at least 1" });
     }
     await pool.query(
       "UPDATE inventory SET low_stock_threshold = $1 WHERE variant_id=$2 AND branch_id=$3",
@@ -272,6 +296,8 @@ exports.updateThreshold = async (req, res) => {
     res.json({ message: "Threshold updated" });
   } catch (err) {
     console.error("updateThreshold error:", err);
-    res.status(500).json({ error: "Could not update threshold. Please try again." });
+    res
+      .status(500)
+      .json({ error: "Could not update threshold. Please try again." });
   }
 };

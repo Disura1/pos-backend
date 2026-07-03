@@ -17,14 +17,15 @@ exports.getAllBranches = async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error("getAllBranches error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.createBranch = async (req, res) => {
   const { branch_name, address, phone, receipt_prefix } = req.body;
   try {
-    if (!branch_name || !branch_name.trim()) return res.status(400).json({ error: 'Branch name is required' });
+    if (!branch_name || !branch_name.trim())
+      return res.status(400).json({ error: "Branch name is required" });
     const result = await pool.query(
       "INSERT INTO branches (branch_name, address, phone, receipt_prefix) VALUES ($1, $2, $3, $4) RETURNING *",
       [branch_name, address || null, phone || null, receipt_prefix || null],
@@ -32,7 +33,7 @@ exports.createBranch = async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     console.error("createBranch error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -40,43 +41,56 @@ exports.updateBranch = async (req, res) => {
   const { id } = req.params;
   const { branch_name, address, phone, is_active, receipt_prefix } = req.body;
   try {
-    if (!branch_name || !branch_name.trim()) return res.status(400).json({ error: 'Branch name is required' });
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid branch ID' });
+    if (!branch_name || !branch_name.trim())
+      return res.status(400).json({ error: "Branch name is required" });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid branch ID" });
     const result = await pool.query(
       "UPDATE branches SET branch_name=$1, address=$2, phone=$3, is_active=$4, receipt_prefix=$5 WHERE id=$6 RETURNING *",
-      [branch_name, address || null, phone || null, is_active, receipt_prefix || null, parseInt(id)],
+      [
+        branch_name,
+        address || null,
+        phone || null,
+        is_active,
+        receipt_prefix || null,
+        parseInt(id),
+      ],
     );
-    if (!result.rows.length) return res.status(404).json({ error: 'Branch not found' });
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Branch not found" });
     res.json(result.rows[0]);
   } catch (err) {
     console.error("updateBranch error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.deleteBranch = async (req, res) => {
   const { id } = req.params;
   try {
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid branch ID' });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid branch ID" });
     const result = await pool.query(
       "UPDATE branches SET is_active = false WHERE id = $1 RETURNING id",
-      [parseInt(id)]
+      [parseInt(id)],
     );
-    if (!result.rows.length) return res.status(404).json({ error: 'Branch not found' });
+    if (!result.rows.length)
+      return res.status(404).json({ error: "Branch not found" });
     res.json({ message: "Branch deactivated" });
   } catch (err) {
     console.error("deleteBranch error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.getBranchStats = async (req, res) => {
   const { id } = req.params;
   try {
-    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid branch ID' });
+    if (!id || isNaN(parseInt(id)))
+      return res.status(400).json({ error: "Invalid branch ID" });
     // Managers can only view their own branch stats
-    if (req.user.role === 'Manager' && parseInt(id) !== req.user.branchId) {
-      return res.status(403).json({ error: 'Access denied' });
+    if (req.user.role === "Manager" && parseInt(id) !== req.user.branchId) {
+      return res.status(403).json({ error: "Access denied" });
     }
     const revenue = await pool.query(
       `
@@ -107,7 +121,7 @@ exports.getBranchStats = async (req, res) => {
     });
   } catch (err) {
     console.error("getBranchStats error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -118,7 +132,7 @@ exports.hardDeleteBranch = async (req, res) => {
     await client.query("BEGIN");
     if (!id || isNaN(parseInt(id))) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ error: 'Invalid branch ID' });
+      return res.status(400).json({ error: "Invalid branch ID" });
     }
 
     // Safety check — block delete if branch has staff assigned
@@ -149,7 +163,7 @@ exports.hardDeleteBranch = async (req, res) => {
   } catch (err) {
     await client.query("ROLLBACK");
     console.error("hardDeleteBranch error:", err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   } finally {
     client.release();
   }

@@ -1,10 +1,11 @@
-const pool = require('../config/db');
+const pool = require("../config/db");
 
 exports.getDailySummary = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT
         COUNT(id)                                        AS total_transactions,
         COALESCE(SUM(total_amount), 0)                   AS total_revenue,
@@ -13,20 +14,23 @@ exports.getDailySummary = async (req, res) => {
       FROM sales
       WHERE sale_date::date = CURRENT_DATE
         AND ($1::int IS NULL OR branch_id = $1::int)
-    `, [branchId]);
+    `,
+      [branchId],
+    );
     res.json(result.rows[0]);
   } catch (err) {
-    console.error('getDailySummary error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error("getDailySummary error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.getRevenueByPeriod = async (req, res) => {
   const days = Math.min(parseInt(req.query.days) || 7, 365); // cap at 1 year
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT
         sale_date::date                    AS date,
         COALESCE(SUM(total_amount), 0)     AS revenue,
@@ -36,21 +40,24 @@ exports.getRevenueByPeriod = async (req, res) => {
         AND ($2::int IS NULL OR branch_id = $2::int)
       GROUP BY sale_date::date
       ORDER BY date ASC
-    `, [days, branchId]);
+    `,
+      [days, branchId],
+    );
     res.json(result.rows);
   } catch (err) {
-    console.error('getRevenueByPeriod error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error("getRevenueByPeriod error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.getTopProducts = async (req, res) => {
-  const days     = Math.min(parseInt(req.query.days)  || 30, 365);
-  const limit    = Math.min(parseInt(req.query.limit) || 10, 50);
+  const days = Math.min(parseInt(req.query.days) || 30, 365);
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(`
+    const result = await pool.query(
+      `
       SELECT
         p.name                                  AS product_name,
         pv.sku, pv.size, pv.color,
@@ -65,11 +72,13 @@ exports.getTopProducts = async (req, res) => {
       GROUP BY p.name, pv.sku, pv.size, pv.color
       ORDER BY total_sold DESC
       LIMIT $3
-    `, [days, branchId, limit]);
+    `,
+      [days, branchId, limit],
+    );
     res.json(result.rows);
   } catch (err) {
-    console.error('getTopProducts error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error("getTopProducts error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
@@ -90,27 +99,34 @@ exports.getBranchComparison = async (req, res) => {
     `);
     res.json(result.rows);
   } catch (err) {
-    console.error('getBranchComparison error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error("getBranchComparison error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
 
 exports.getDateRangeReport = async (req, res) => {
   const { startDate, endDate } = req.query;
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
-  if (req.user.role === 'Manager') branchId = req.user.branchId;
+  if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
     if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'startDate and endDate are required' });
+      return res
+        .status(400)
+        .json({ error: "startDate and endDate are required" });
     }
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
-      return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
+      return res
+        .status(400)
+        .json({ error: "Dates must be in YYYY-MM-DD format" });
     }
     if (new Date(startDate) > new Date(endDate)) {
-      return res.status(400).json({ error: 'startDate cannot be after endDate' });
+      return res
+        .status(400)
+        .json({ error: "startDate cannot be after endDate" });
     }
-    const summary = await pool.query(`
+    const summary = await pool.query(
+      `
       SELECT
         COUNT(id)                                        AS total_transactions,
         COALESCE(SUM(total_amount), 0)                   AS total_revenue,
@@ -119,9 +135,12 @@ exports.getDateRangeReport = async (req, res) => {
       FROM sales
       WHERE sale_date::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
-    `, [startDate, endDate, branchId]);
+    `,
+      [startDate, endDate, branchId],
+    );
 
-    const daily = await pool.query(`
+    const daily = await pool.query(
+      `
       SELECT
         sale_date::date           AS date,
         SUM(total_amount)         AS revenue,
@@ -131,11 +150,13 @@ exports.getDateRangeReport = async (req, res) => {
         AND ($3::int IS NULL OR branch_id = $3::int)
       GROUP BY sale_date::date
       ORDER BY date
-    `, [startDate, endDate, branchId]);
+    `,
+      [startDate, endDate, branchId],
+    );
 
     res.json({ summary: summary.rows[0], daily: daily.rows });
   } catch (err) {
-    console.error('getDateRangeReport error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error("getDateRangeReport error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
