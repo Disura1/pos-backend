@@ -47,6 +47,17 @@ exports.updateUser = async (req, res) => {
   try {
     if (!role_id) return res.status(400).json({ error: 'Role is required' });
     if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid user ID' });
+    // Prevent user from deactivating their own account
+    if (req.user.id === parseInt(id) && is_active === false) {
+      return res.status(400).json({ error: 'You cannot deactivate your own account' });
+    }
+    // Prevent user from changing their own role
+    if (req.user.id === parseInt(id)) {
+      const currentRole = await pool.query('SELECT role_id FROM users WHERE id = $1', [id]);
+      if (currentRole.rows[0]?.role_id !== parseInt(role_id)) {
+        return res.status(400).json({ error: 'You cannot change your own role' });
+      }
+    }
     const result = await pool.query(
       `UPDATE users SET full_name=$1, role_id=$2, branch_id=$3, is_active=$4
        WHERE id=$5 RETURNING id, username, full_name, role_id, branch_id, is_active`,
