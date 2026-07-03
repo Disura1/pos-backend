@@ -23,6 +23,9 @@ exports.createUser = async (req, res) => {
     return res
       .status(400)
       .json({ error: "Password must be at least 6 characters" });
+  if (!username || !username.trim())
+    return res.status(400).json({ error: "Username is required" });
+  if (!role_id) return res.status(400).json({ error: "Role is required" });
   try {
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
@@ -42,6 +45,8 @@ exports.updateUser = async (req, res) => {
   const { id } = req.params;
   const { full_name, role_id, branch_id, is_active } = req.body;
   try {
+    if (!role_id) return res.status(400).json({ error: 'Role is required' });
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid user ID' });
     const result = await pool.query(
       `UPDATE users SET full_name=$1, role_id=$2, branch_id=$3, is_active=$4
        WHERE id=$5 RETURNING id, username, full_name, role_id, branch_id, is_active`,

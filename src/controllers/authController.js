@@ -6,6 +6,8 @@ const JWT_SECRET = process.env.JWT_SECRET;
 exports.login = async (req, res) => {
   const { username, password } = req.body;
   try {
+    if (!username || !username.trim()) return res.status(400).json({ error: 'Username is required' });
+    if (!password) return res.status(400).json({ error: 'Password is required' });
     const result = await pool.query(
       `SELECT u.id, u.username, u.password_hash, u.full_name, u.branch_id,
               r.role_name, b.branch_name
@@ -53,6 +55,8 @@ exports.changePassword = async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const userId = req.user.id;
   try {
+    if (!currentPassword) return res.status(400).json({ error: 'Current password is required' });
+    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
     const result = await pool.query(
       "SELECT password_hash FROM users WHERE id = $1",
       [userId],

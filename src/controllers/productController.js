@@ -35,10 +35,12 @@ exports.updateProduct = async (req, res) => {
   try {
     if (!name || !name.trim()) return res.status(400).json({ error: 'Product name is required' });
     if (!base_price || parseFloat(base_price) <= 0) return res.status(400).json({ error: 'Base price must be greater than 0' });
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid product ID' });
     const result = await pool.query(
-      "UPDATE products SET name=$1,description=$2,base_price=$3,main_image=$4 WHERE id=$5 RETURNING *",
-      [name, description, base_price, main_image, id],
+      "UPDATE products SET name=$1, description=$2, base_price=$3, main_image=COALESCE($4, main_image) WHERE id=$5 RETURNING *",
+      [name, description || null, parseFloat(base_price), main_image || null, parseInt(id)],
     );
+    if (!result.rows.length) return res.status(404).json({ error: 'Product not found' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -111,10 +113,12 @@ exports.updateVariant = async (req, res) => {
 exports.deleteVariant = async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query(
-      "UPDATE product_variants SET is_active = false WHERE id = $1",
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid variant ID' });
+    const result = await pool.query(
+      "UPDATE product_variants SET is_active = false WHERE id = $1 RETURNING id",
       [id]
     );
+    if (!result.rows.length) return res.status(404).json({ error: 'Variant not found' });
     res.json({ message: "Variant deactivated" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -188,9 +192,9 @@ exports.getVariants = async (req, res) => {
   const { productId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT pv.*, COALESCE(json_agg(json_build_object('branch_id', i.branch_id, 'branch_name', b.branch_name, 'stock_qty', i.stock_qty)) FILTER (WHERE i.id IS NOT NULL), '[]') AS stock
+      `SELECT pv.*, COALESCE(json_agg(json_build_object('branch_id', i.branch_id, 'branch_name', b.branch_name, 'stock_qty', i.stock_qty)) FILTER (WHERE i.id IS NOT NULL AND i.is_active = true), '[]') AS stock
        FROM product_variants pv
-       LEFT JOIN inventory i ON pv.id = i.variant_id
+       LEFT JOIN inventory i ON pv.id = i.variant_id AND i.is_active = true
        LEFT JOIN branches b ON i.branch_id = b.id
        WHERE pv.product_id = $1 AND pv.is_active = true
        GROUP BY pv.id ORDER BY pv.size, pv.color`,
@@ -205,6 +209,9 @@ exports.getVariants = async (req, res) => {
 exports.scanProduct = async (req, res) => {
   const { barcode } = req.params;
   const { branchId } = req.query;
+  if (!barcode || !barcode.trim()) {
+    return res.status(400).json({ error: 'Barcode is required' });
+  }
   try {
     const result = await pool.query(
       `
@@ -214,14 +221,14 @@ exports.scanProduct = async (req, res) => {
              COALESCE(i.stock_qty, 0) AS stock_qty
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
-      LEFT JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $2
+      LEFT JOIN inventory i ON pv.id = i.variant_id
+        AND ($2::int IS NULL OR i.branch_id = $2)
       WHERE pv.barcode = $1 AND pv.is_active = true AND p.is_active = true
     `,
-      [barcode.trim(), branchId || 1],
+      [barcode.trim(), branchId ? parseInt(branchId) : null],
     );
-
     if (result.rows.length === 0)
-      return res.status(404).json({ message: "Product not found" });
+      return res.status(404).json({ message: 'Product not found' });
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -247,7 +254,7 @@ exports.searchProducts = async (req, res) => {
       JOIN product_variants pv ON p.id = pv.product_id AND pv.is_active = true
       LEFT JOIN inventory i_this
         ON pv.id = i_this.variant_id
-        AND i_this.branch_id = $2
+        AND ($2::int IS NULL OR i_this.branch_id = $2)
         AND i_this.is_active = true
       LEFT JOIN LATERAL (
         SELECT SUM(stock_qty) AS total_stock
@@ -259,7 +266,7 @@ exports.searchProducts = async (req, res) => {
       )
       ORDER BY p.name LIMIT 50
     `,
-      [`%${q}%`, branchId || 1],
+      [`%${q}%`, branchId ? parseInt(branchId) : null],
     );
     res.json(result.rows);
   } catch (err) {
