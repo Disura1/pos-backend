@@ -57,9 +57,12 @@ exports.updateBranch = async (req, res) => {
 exports.deleteBranch = async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query("UPDATE branches SET is_active = false WHERE id = $1", [
-      id,
-    ]);
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid branch ID' });
+    const result = await pool.query(
+      "UPDATE branches SET is_active = false WHERE id = $1 RETURNING id",
+      [parseInt(id)]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Branch not found' });
     res.json({ message: "Branch deactivated" });
   } catch (err) {
     console.error("deleteBranch error:", err.message);
@@ -70,6 +73,7 @@ exports.deleteBranch = async (req, res) => {
 exports.getBranchStats = async (req, res) => {
   const { id } = req.params;
   try {
+    if (!id || isNaN(parseInt(id))) return res.status(400).json({ error: 'Invalid branch ID' });
     // Managers can only view their own branch stats
     if (req.user.role === 'Manager' && parseInt(id) !== req.user.branchId) {
       return res.status(403).json({ error: 'Access denied' });
@@ -112,6 +116,10 @@ exports.hardDeleteBranch = async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (!id || isNaN(parseInt(id))) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: 'Invalid branch ID' });
+    }
 
     // Safety check — block delete if branch has staff assigned
     const staffCheck = await client.query(
