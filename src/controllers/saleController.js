@@ -18,6 +18,13 @@ exports.checkout = async (req, res) => {
     return res.status(400).json({ error: "Cart is empty" });
   if (!branchId)
     return res.status(400).json({ error: "Branch ID is required" });
+  // Cashier can only checkout for their own branch — ignore client-sent branchId
+  const safeBranchId = req.user.role === 'Cashier'
+    ? req.user.branchId
+    : parseInt(branchId);
+  if (!safeBranchId) {
+    return res.status(400).json({ error: "Branch ID is required" });
+  }
   for (const item of cart) {
     if (!item.sku || typeof item.sku !== "string")
       return res.status(400).json({ error: "Invalid cart item: missing SKU" });
@@ -31,10 +38,27 @@ exports.checkout = async (req, res) => {
         .json({ error: `Invalid quantity for ${item.sku}` });
   }
 
+  const validPaymentMethods = ['cash', 'card'];
+  if (paymentMethod && !validPaymentMethods.includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Invalid payment method' });
+  }
+
   const cashierId = req.user.id;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // Validate discount if provided
+    if (discountId) {
+      const discCheck = await client.query(
+        'SELECT id FROM discounts WHERE id = $1 AND is_active = true',
+        [discountId]
+      );
+      if (!discCheck.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Invalid or inactive discount' });
+      }
+    }
 
     const saleRes = await client.query(
       `INSERT INTO sales
@@ -42,7 +66,7 @@ exports.checkout = async (req, res) => {
           total_amount, payment_method, amount_tendered, change_amount, note)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
       [
-        branchId,
+        safeBranchId,
         cashierId,
         subtotal || total,
         discountId || null,
@@ -60,7 +84,7 @@ exports.checkout = async (req, res) => {
     // Use stored prefix from branches table — no need to query all branches
     const prefixRes = await client.query(
       "SELECT COALESCE(receipt_prefix, 'TG') AS prefix FROM branches WHERE id = $1",
-      [branchId],
+      [safeBranchId],
     );
     const prefix = prefixRes.rows[0]?.prefix || "TG";
     const receiptNumber = `${prefix}-${String(saleId).padStart(6, "0")}`;
@@ -98,7 +122,7 @@ exports.checkout = async (req, res) => {
         `SELECT stock_qty FROM inventory
          WHERE variant_id = $1 AND branch_id = $2
          FOR UPDATE`,
-        [variantId, branchId],
+        [variantId, safeBranchId],
       );
       const availableQty = stockCheck.rows[0]?.stock_qty || 0;
       if (availableQty < qty) {
@@ -107,13 +131,13 @@ exports.checkout = async (req, res) => {
       await client.query(
         `UPDATE inventory SET stock_qty = stock_qty - $1
          WHERE variant_id=$2 AND branch_id=$3`,
-        [qty, variantId, branchId],
+        [qty, variantId, safeBranchId],
       );
 
       await client.query(
         `INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, reference_id, created_by)
          VALUES ($1,$2,'sale',$3,$4,$5)`,
-        [variantId, branchId, -qty, saleId, cashierId],
+        [variantId, safeBranchId, -qty, saleId, cashierId],
       );
     }
 
@@ -153,6 +177,10 @@ exports.getHistory = async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 500); // cap at 500
   const date = req.query.date || null;
   try {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (date && !dateRegex.test(date)) {
+      return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format' });
+    }
     const result = await pool.query(
       `
       SELECT s.id, s.receipt_number, s.total_amount,

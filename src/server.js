@@ -22,7 +22,7 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Rate limiter — max 10 login attempts per 15 minutes per IP
 const loginLimiter = rateLimit({
