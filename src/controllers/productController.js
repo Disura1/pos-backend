@@ -517,3 +517,26 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
     res.status(500).json({ error: "Something went wrong. Please try again." });
   }
 };
+
+exports.getOfflineCatalog = async (req, res) => {
+  let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
+  if (req.user.role === "Cashier") branchId = req.user.branchId;
+  if (!branchId) return res.status(400).json({ error: "Branch ID is required" });
+  try {
+    const result = await pool.query(
+      `SELECT p.id AS product_id, p.name, p.base_price,
+              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
+              COALESCE(pv.variant_price, p.base_price) AS price,
+              COALESCE(i.stock_qty, 0) AS stock_qty
+       FROM products p
+       JOIN product_variants pv ON p.id = pv.product_id AND pv.is_active = true
+       LEFT JOIN inventory i ON pv.id = i.variant_id AND i.branch_id = $1 AND i.is_active = true
+       WHERE p.is_active = true`,
+      [branchId],
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
+  }
+};

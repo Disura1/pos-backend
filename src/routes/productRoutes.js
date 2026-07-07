@@ -10,6 +10,7 @@ const isManagerOnly = authorize("Manager");
 router.use(authenticate);
 router.get("/search", pc.searchProducts);
 router.get("/scan/:barcode", pc.scanProduct);
+router.get("/offline-catalog", pc.getOfflineCatalog);
 router.get("/all", isOwnerOrManager, pc.getAllProducts);
 router.get("/category/:categoryId", pc.getProductsByCategory);
 router.get("/category/:categoryId/branch", pc.getProductsByCategoryAndBranch);
