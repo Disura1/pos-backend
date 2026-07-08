@@ -6,12 +6,13 @@ exports.getAllBranches = async (req, res) => {
       SELECT b.id, b.branch_name,
              COALESCE(b.address, '')    AS address,
              COALESCE(b.phone, '')      AS phone,
+             COALESCE(b.receipt_prefix, '') AS receipt_prefix,
              COALESCE(b.is_active, true) AS is_active,
              b.created_at,
              COUNT(DISTINCT u.id) AS staff_count
       FROM branches b
       LEFT JOIN users u ON u.branch_id = b.id
-      GROUP BY b.id, b.branch_name, b.address, b.phone, b.is_active, b.created_at
+      GROUP BY b.id, b.branch_name, b.address, b.phone, b.receipt_prefix, b.is_active, b.created_at
       ORDER BY b.id ASC
     `);
     res.json(result.rows);
