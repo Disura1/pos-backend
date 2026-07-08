@@ -21,18 +21,22 @@ exports.getAllUsers = async (req, res) => {
 exports.createUser = async (req, res) => {
   const { username, password, full_name, role_id, branch_id } = req.body;
   if (!password || password.length < 6)
-    return res
-      .status(400)
-      .json({ error: "Password must be at least 6 characters" });
+    return res.status(400).json({ error: "Password must be at least 6 characters" });
   if (!username || !username.trim())
     return res.status(400).json({ error: "Username is required" });
   if (!role_id) return res.status(400).json({ error: "Role is required" });
   try {
+    const roleRes = await pool.query("SELECT role_name FROM roles WHERE id = $1", [role_id]);
+    if (!roleRes.rows.length) return res.status(400).json({ error: "Invalid role" });
+    const isOwnerRole = ["Owner", "Admin"].includes(roleRes.rows[0].role_name);
+    if (!isOwnerRole && !branch_id) {
+      return res.status(400).json({ error: "Branch is required for this role" });
+    }
     const hash = await bcrypt.hash(password, 10);
     const result = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, role_id, branch_id)
        VALUES ($1, $2, $3, $4, $5) RETURNING id, username, full_name, role_id, branch_id, is_active, created_at`,
-      [username, hash, full_name, role_id, branch_id || null],
+      [username, hash, full_name, role_id, isOwnerRole ? null : branch_id],
     );
     res.json(result.rows[0]);
   } catch (err) {
@@ -50,28 +54,27 @@ exports.updateUser = async (req, res) => {
     if (!role_id) return res.status(400).json({ error: "Role is required" });
     if (!id || isNaN(parseInt(id)))
       return res.status(400).json({ error: "Invalid user ID" });
-    // Prevent user from deactivating their own account
-    if (req.user.id === parseInt(id) && is_active === false) {
-      return res
-        .status(400)
-        .json({ error: "You cannot deactivate your own account" });
+
+    const roleRes = await pool.query("SELECT role_name FROM roles WHERE id = $1", [role_id]);
+    if (!roleRes.rows.length) return res.status(400).json({ error: "Invalid role" });
+    const isOwnerRole = ["Owner", "Admin"].includes(roleRes.rows[0].role_name);
+    if (!isOwnerRole && !branch_id) {
+      return res.status(400).json({ error: "Branch is required for this role" });
     }
-    // Prevent user from changing their own role
+
+    if (req.user.id === parseInt(id) && is_active === false) {
+      return res.status(400).json({ error: "You cannot deactivate your own account" });
+    }
     if (req.user.id === parseInt(id)) {
-      const currentRole = await pool.query(
-        "SELECT role_id FROM users WHERE id = $1",
-        [id],
-      );
+      const currentRole = await pool.query("SELECT role_id FROM users WHERE id = $1", [id]);
       if (currentRole.rows[0]?.role_id !== parseInt(role_id)) {
-        return res
-          .status(400)
-          .json({ error: "You cannot change your own role" });
+        return res.status(400).json({ error: "You cannot change your own role" });
       }
     }
     const result = await pool.query(
       `UPDATE users SET full_name=$1, role_id=$2, branch_id=$3, is_active=$4
        WHERE id=$5 RETURNING id, username, full_name, role_id, branch_id, is_active`,
-      [full_name, role_id, branch_id || null, is_active, parseInt(id)],
+      [full_name, role_id, isOwnerRole ? null : branch_id, is_active, parseInt(id)],
     );
     if (!result.rows.length)
       return res.status(404).json({ error: "User not found" });
