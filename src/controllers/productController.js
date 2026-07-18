@@ -359,14 +359,11 @@ exports.scanProduct = async (req, res) => {
 
 exports.searchProducts = async (req, res) => {
   const { q } = req.query;
-  // Cashiers can only search their own branch
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
   if (req.user.role === "Cashier") branchId = req.user.branchId;
   try {
     if (!q || q.trim().length < 2) {
-      return res
-        .status(400)
-        .json({ error: "Search query must be at least 2 characters" });
+      return res.status(400).json({ error: "Search query must be at least 2 characters" });
     }
     const result = await pool.query(
       `
@@ -375,7 +372,6 @@ exports.searchProducts = async (req, res) => {
              COALESCE(pv.variant_price, p.base_price) AS price,
              COALESCE(i_this.stock_qty, 0)            AS stock_qty,
              COALESCE(i_total.total_stock, 0)         AS total_stock,
-             -- true only when this branch has an active inventory record for this variant
              (i_this.id IS NOT NULL)                  AS is_active_here
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id AND pv.is_active = true
@@ -388,9 +384,9 @@ exports.searchProducts = async (req, res) => {
         FROM inventory
         WHERE variant_id = pv.id AND is_active = true
       ) i_total ON true
-      WHERE p.is_active = true AND (
-        p.name ILIKE $1 OR pv.sku ILIKE $1 OR pv.barcode ILIKE $1
-      )
+      WHERE p.is_active = true
+        AND (p.name ILIKE $1 OR pv.sku ILIKE $1 OR pv.barcode ILIKE $1)
+        AND ($2::int IS NULL OR i_this.id IS NOT NULL)
       ORDER BY p.name LIMIT 50
     `,
       [`%${q}%`, branchId ? parseInt(branchId) : null],
@@ -475,7 +471,7 @@ exports.getVariantsByBranch = async (req, res) => {
             )
           ) AS stock
         FROM product_variants pv
-        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.stock_qty > 0
+        JOIN inventory i ON i.variant_id = pv.id AND i.branch_id = $2 AND i.is_active = true
         JOIN branches b ON b.id = i.branch_id
         WHERE pv.product_id = $1 AND pv.is_active = true
         ORDER BY pv.size, pv.color
