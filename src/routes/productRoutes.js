@@ -15,7 +15,7 @@ router.get("/offline-catalog", pc.getOfflineCatalog);
 router.get("/all", isOwnerOrManager, pc.getAllProducts);
 router.get("/category/:categoryId", pc.getProductsByCategory);
 router.get("/category/:categoryId/branch", pc.getProductsByCategoryAndBranch);
-router.get("/category/:categoryId/with-stock", isOwnerOrManager, pc.getProductsByCategoryWithStock);
+router.get("/category/:categoryId/with-stock", isOwnerManagerOrCashier, pc.getProductsByCategoryWithStock);
 router.get("/:productId/variants",             isOwnerOrManager, pc.getVariants);
 router.get("/:productId/variants/branch",      isOwnerManagerOrCashier, pc.getVariantsByBranch);
 router.post("/", isManagerOnly, pc.createProduct);
