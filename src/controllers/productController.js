@@ -564,8 +564,18 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
         p.name,
         p.base_price,
         p.description,
-        COALESCE(SUM(i.stock_qty) FILTER (WHERE i.is_active = true AND i.branch_id = $2), 0) AS branch_stock,
-        COALESCE(
+        COALESCE(branch_stock.qty, 0) AS branch_stock,
+        COALESCE(all_stock.stock, '[]') AS stock,
+        COALESCE(all_stock.total, 0) AS total_stock
+      FROM products p
+      LEFT JOIN LATERAL (
+        SELECT SUM(i.stock_qty) AS qty
+        FROM product_variants pv
+        JOIN inventory i ON i.variant_id = pv.id AND i.is_active = true AND i.branch_id = $2
+        WHERE pv.product_id = p.id AND pv.is_active = true
+      ) branch_stock ON true
+      LEFT JOIN LATERAL (
+        SELECT
           json_agg(
             json_build_object(
               'branch_id',  bs.branch_id,
@@ -573,26 +583,18 @@ exports.getProductsByCategoryWithStock = async (req, res) => {
               'stock_qty',  bs.branch_total
             )
             ORDER BY bs.branch_name
-          ) FILTER (WHERE bs.branch_id IS NOT NULL),
-          '[]'
-        ) AS stock,
-        COALESCE(SUM(bs.branch_total), 0) AS total_stock
-      FROM products p
-      LEFT JOIN product_variants pv ON pv.product_id = p.id AND pv.is_active = true
-      LEFT JOIN inventory i ON i.variant_id = pv.id
-      LEFT JOIN LATERAL (
-        SELECT
-          i2.branch_id,
-          b2.branch_name,
-          SUM(i2.stock_qty) AS branch_total
-        FROM product_variants pv2
-        JOIN inventory i2 ON i2.variant_id = pv2.id AND i2.is_active = true
-        JOIN branches b2   ON b2.id = i2.branch_id
-        WHERE pv2.product_id = p.id AND pv2.is_active = true
-        GROUP BY i2.branch_id, b2.branch_name
-      ) bs ON true
+          ) AS stock,
+          SUM(bs.branch_total) AS total
+        FROM (
+          SELECT i2.branch_id, b2.branch_name, SUM(i2.stock_qty) AS branch_total
+          FROM product_variants pv2
+          JOIN inventory i2 ON i2.variant_id = pv2.id AND i2.is_active = true
+          JOIN branches b2  ON b2.id = i2.branch_id
+          WHERE pv2.product_id = p.id AND pv2.is_active = true
+          GROUP BY i2.branch_id, b2.branch_name
+        ) bs
+      ) all_stock ON true
       WHERE p.category_id = $1 AND p.is_active = true
-      GROUP BY p.id
       ORDER BY p.name
       `,
       [categoryId, branchId || 0],
