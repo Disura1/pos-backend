@@ -11,6 +11,6 @@ router.get('/daily-summary',     isOwnerOrManager, rc.getDailySummary);
 router.get('/revenue-by-period', isOwnerOrManager, rc.getRevenueByPeriod);
 router.get('/top-products',      isOwnerOrManager, rc.getTopProducts);
 router.get('/branch-comparison', isOwner,          rc.getBranchComparison);
-router.get('/date-range',        isOwner,          rc.getDateRangeReport);
+router.get('/date-range', isOwnerOrManager, rc.getDateRangeReport);
 
 module.exports = router;
