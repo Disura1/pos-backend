@@ -21,6 +21,7 @@ router.post("/", isManagerOnly, pc.createProduct);
 router.put("/:id", isManagerOnly, pc.updateProduct);
 router.delete("/:id", isOwner, pc.deleteProduct);
 router.post("/variant", isManagerOnly, pc.addVariant);
+router.post("/quick-create", isManagerOnly, pc.quickCreateProduct);
 router.put("/variant/:id", isManagerOnly, pc.updateVariant);
 router.delete("/variant/:id", isOwner, pc.deleteVariant);
 

@@ -216,6 +216,96 @@ exports.addVariant = async (req, res) => {
   }
 };
 
+exports.quickCreateProduct = async (req, res) => {
+  const {
+    name, description, base_price, category_id,
+    sku, size, color, barcode, variant_price,
+    branch_id, quantity, note,
+  } = req.body;
+
+  if (!name || !name.trim())
+    return res.status(400).json({ error: "Product name is required" });
+  if (!base_price || parseFloat(base_price) <= 0)
+    return res.status(400).json({ error: "Base price must be greater than 0" });
+  if (!category_id)
+    return res.status(400).json({ error: "Category is required" });
+  if (!sku || !sku.trim())
+    return res.status(400).json({ error: "SKU is required" });
+  if (!barcode || !barcode.trim())
+    return res.status(400).json({ error: "Barcode is required" });
+  if (!branch_id)
+    return res.status(400).json({ error: "Branch is required" });
+  const qty = parseInt(quantity) || 0;
+  if (qty < 0)
+    return res.status(400).json({ error: "Quantity cannot be negative" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const skuCheck = await client.query(
+      "SELECT id FROM product_variants WHERE sku = $1",
+      [sku],
+    );
+    if (skuCheck.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `SKU "${sku}" already exists. Use a different SKU.` });
+    }
+    const barcodeCheck = await client.query(
+      "SELECT id FROM product_variants WHERE barcode = $1",
+      [barcode],
+    );
+    if (barcodeCheck.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `Barcode "${barcode}" already exists. Use a different barcode.` });
+    }
+
+    const productRes = await client.query(
+      `INSERT INTO products (name, description, base_price, category_id)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [name, description || "", parseFloat(base_price), category_id],
+    );
+    const product = productRes.rows[0];
+
+    const variantRes = await client.query(
+      `INSERT INTO product_variants (product_id, sku, size, color, barcode, variant_price)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [product.id, sku, size || null, color || null, barcode, variant_price || null],
+    );
+    const variant = variantRes.rows[0];
+
+    const branches = await client.query("SELECT id FROM branches WHERE is_active = true");
+    for (const b of branches.rows) {
+      const isOwningBranch = b.id === parseInt(branch_id);
+      await client.query(
+        `INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active)
+         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+        [variant.id, b.id, isOwningBranch ? qty : 0, isOwningBranch],
+      );
+    }
+
+    if (qty > 0) {
+      await client.query(
+        `INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, note, created_by)
+         VALUES ($1, $2, 'receive', $3, $4, $5)`,
+        [variant.id, branch_id, qty, note || "Initial stock receive", req.user.id],
+      );
+    }
+
+    await client.query("COMMIT");
+    res.json({ product, variant, quantity: qty });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    if (err.code === "23505") {
+      return res.status(400).json({ error: "SKU or barcode already exists." });
+    }
+    res.status(500).json({ error: "Something went wrong. Please try again." });
+  } finally {
+    client.release();
+  }
+};
+
 exports.getVariants = async (req, res) => {
   const { productId } = req.params;
   try {
