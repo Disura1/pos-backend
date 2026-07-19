@@ -213,10 +213,15 @@ exports.getHistory = async (req, res) => {
   }
   const limit = Math.min(parseInt(req.query.limit) || 20, 500); // cap at 500
   const date = req.query.date || null;
+  const startDate = req.query.startDate || null;
+  const endDate = req.query.endDate || null;
   try {
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (date && !dateRegex.test(date)) {
       return res.status(400).json({ error: 'Date must be in YYYY-MM-DD format' });
+    }
+    if ((startDate && !dateRegex.test(startDate)) || (endDate && !dateRegex.test(endDate))) {
+      return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format' });
     }
     const result = await pool.query(
       `
@@ -233,11 +238,13 @@ exports.getHistory = async (req, res) => {
       LEFT JOIN sale_items si ON s.id = si.sale_id
       WHERE ($1::int IS NULL OR s.branch_id = $1)
         AND ($2::date IS NULL OR s.sale_date::date = $2::date)
+        AND ($4::date IS NULL OR s.sale_date::date >= $4::date)
+        AND ($5::date IS NULL OR s.sale_date::date <= $5::date)
       GROUP BY s.id, b.branch_name, u.full_name, u.username
       ORDER BY s.sale_date DESC
       LIMIT $3
     `,
-      [branchId || null, date || null, limit],
+      [branchId || null, date || null, limit, startDate || null, endDate || null],
     );
     res.json(result.rows);
   } catch (err) {
