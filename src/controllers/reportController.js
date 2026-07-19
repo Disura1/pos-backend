@@ -1,5 +1,11 @@
 const pool = require("../config/db");
 
+// Postgres DATE columns come back from `pg` as native JS Date objects.
+// String(dateObject) calls .toString() — a locale string like "Sun Jul 06 2026...",
+// NOT ISO format. Always convert through toISOString() first so date keys/values
+// are reliably "YYYY-MM-DD", whether the input is a Date object or already a string.
+const toDateKey = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
+
 exports.getDailySummary = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
   if (req.user.role === "Manager") branchId = req.user.branchId;
@@ -69,18 +75,18 @@ exports.getRevenueByPeriod = async (req, res) => {
     );
     const returnsByDate = {};
     returnsRes.rows.forEach((r) => {
-      returnsByDate[String(r.date).slice(0, 10)] = parseFloat(r.returns) || 0;
+      returnsByDate[toDateKey(r.date)] = parseFloat(r.returns) || 0;
     });
 
     const merged = salesRes.rows.map((r) => {
-      const dateKey = String(r.date).slice(0, 10);
+      const dateKey = toDateKey(r.date);
       const revenue = parseFloat(r.revenue) || 0;
       const returns = returnsByDate[dateKey] || 0;
       return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
     });
     // Include days that had ONLY returns and no sales, so those aren't silently dropped
     Object.keys(returnsByDate).forEach((dateKey) => {
-      if (!merged.find((m) => String(m.date).slice(0, 10) === dateKey)) {
+      if (!merged.find((m) => toDateKey(m.date) === dateKey)) {
         merged.push({ date: dateKey, revenue: -returnsByDate[dateKey], transactions: 0 });
       }
     });
@@ -255,10 +261,10 @@ exports.getDateRangeReport = async (req, res) => {
     );
     const returnsByDate = {};
     dailyReturnsRes.rows.forEach((r) => {
-      returnsByDate[String(r.date).slice(0, 10)] = parseFloat(r.returns) || 0;
+      returnsByDate[toDateKey(r.date)] = parseFloat(r.returns) || 0;
     });
     const daily = dailyRes.rows.map((r) => {
-      const dateKey = String(r.date).slice(0, 10);
+      const dateKey = toDateKey(r.date);
       const revenue = parseFloat(r.revenue) || 0;
       const returns = returnsByDate[dateKey] || 0;
       return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
@@ -586,12 +592,12 @@ exports.getProfitTrend = async (req, res) => {
     );
 
     const revenueByDate = {};
-    revenueRes.rows.forEach((r) => { revenueByDate[String(r.date).slice(0, 10)] = parseFloat(r.revenue) || 0; });
+    revenueRes.rows.forEach((r) => { revenueByDate[toDateKey(r.date)] = parseFloat(r.revenue) || 0; });
     const costByDate = {};
-    costRes.rows.forEach((r) => { costByDate[String(r.date).slice(0, 10)] = parseFloat(r.cogs) || 0; });
+    costRes.rows.forEach((r) => { costByDate[toDateKey(r.date)] = parseFloat(r.cogs) || 0; });
     const returnsByDate = {};
     returnsRes.rows.forEach((r) => {
-      returnsByDate[String(r.date).slice(0, 10)] = {
+      returnsByDate[toDateKey(r.date)] = {
         returns: parseFloat(r.returns) || 0,
         returnedCogs: parseFloat(r.returned_cogs) || 0,
       };
