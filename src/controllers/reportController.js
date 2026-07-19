@@ -1,5 +1,11 @@
 const pool = require("../config/db");
 
+// The business operates in Sri Lanka (UTC+5:30). Never rely on the Postgres
+// session's default timezone (often UTC on managed hosts, and that setting
+// can silently fail to apply) — always convert explicitly with AT TIME ZONE
+// so "today" and daily buckets always match the business's actual calendar day.
+const TZ = "Asia/Colombo";
+
 // Postgres DATE columns come back from `pg` as native JS Date objects.
 // String(dateObject) calls .toString() — a locale string like "Sun Jul 06 2026...",
 // NOT ISO format. Always convert through toISOString() first so date keys/values
@@ -18,7 +24,7 @@ exports.getDailySummary = async (req, res) => {
         COALESCE(SUM(COALESCE(discount_amount, 0)), 0)   AS total_discounts,
         COALESCE(AVG(total_amount), 0)                   AS avg_sale
       FROM sales
-      WHERE sale_date::date = CURRENT_DATE
+      WHERE (sale_date AT TIME ZONE '${TZ}')::date = (NOW() AT TIME ZONE '${TZ}')::date
         AND ($1::int IS NULL OR branch_id = $1::int)
     `,
       [branchId],
@@ -27,7 +33,7 @@ exports.getDailySummary = async (req, res) => {
       `
       SELECT COALESCE(SUM(refund_amount), 0) AS total_returns
       FROM returns
-      WHERE created_at::date = CURRENT_DATE
+      WHERE (created_at AT TIME ZONE '${TZ}')::date = (NOW() AT TIME ZONE '${TZ}')::date
         AND ($1::int IS NULL OR branch_id = $1::int)
     `,
       [branchId],
@@ -53,23 +59,23 @@ exports.getRevenueByPeriod = async (req, res) => {
     const salesRes = await pool.query(
       `
       SELECT
-        sale_date::date                    AS date,
-        COALESCE(SUM(total_amount), 0)     AS revenue,
-        COUNT(*)                           AS transactions
+        (sale_date AT TIME ZONE '${TZ}')::date AS date,
+        COALESCE(SUM(total_amount), 0)         AS revenue,
+        COUNT(*)                               AS transactions
       FROM sales
-      WHERE sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+      WHERE sale_date >= NOW() - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR branch_id = $2::int)
-      GROUP BY sale_date::date
+      GROUP BY (sale_date AT TIME ZONE '${TZ}')::date
       `,
       [days, branchId],
     );
     const returnsRes = await pool.query(
       `
-      SELECT created_at::date AS date, COALESCE(SUM(refund_amount), 0) AS returns
+      SELECT (created_at AT TIME ZONE '${TZ}')::date AS date, COALESCE(SUM(refund_amount), 0) AS returns
       FROM returns
-      WHERE created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+      WHERE created_at >= NOW() - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR branch_id = $2::int)
-      GROUP BY created_at::date
+      GROUP BY (created_at AT TIME ZONE '${TZ}')::date
       `,
       [days, branchId],
     );
@@ -82,11 +88,11 @@ exports.getRevenueByPeriod = async (req, res) => {
       const dateKey = toDateKey(r.date);
       const revenue = parseFloat(r.revenue) || 0;
       const returns = returnsByDate[dateKey] || 0;
-      return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
+      return { date: dateKey, revenue: revenue - returns, transactions: parseInt(r.transactions) };
     });
     // Include days that had ONLY returns and no sales, so those aren't silently dropped
     Object.keys(returnsByDate).forEach((dateKey) => {
-      if (!merged.find((m) => toDateKey(m.date) === dateKey)) {
+      if (!merged.find((m) => m.date === dateKey)) {
         merged.push({ date: dateKey, revenue: -returnsByDate[dateKey], transactions: 0 });
       }
     });
@@ -116,7 +122,7 @@ exports.getTopProducts = async (req, res) => {
         JOIN product_variants pv ON si.variant_id  = pv.id
         JOIN products p          ON pv.product_id  = p.id
         JOIN sales s             ON si.sale_id     = s.id
-        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE s.sale_date >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR s.branch_id = $2::int)
         GROUP BY p.name, pv.id, pv.sku, pv.size, pv.color
       ),
@@ -129,7 +135,7 @@ exports.getTopProducts = async (req, res) => {
         JOIN returns r        ON ri.return_id  = r.id
         JOIN sale_items si2   ON ri.sale_item_id = si2.id
         JOIN product_variants pv ON si2.variant_id = pv.id
-        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE r.created_at >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR r.branch_id = $2::int)
         GROUP BY pv.id
       )
@@ -157,9 +163,9 @@ exports.getBranchComparison = async (req, res) => {
       WITH rev AS (
         SELECT
           b.id,
-          COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_revenue,
-          COALESCE(COUNT(s.id)         FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_transactions,
-          COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date >= LOCALTIMESTAMP - INTERVAL '30 days'), 0)  AS month_revenue
+          COALESCE(SUM(s.total_amount) FILTER (WHERE (s.sale_date AT TIME ZONE '${TZ}')::date = (NOW() AT TIME ZONE '${TZ}')::date), 0)  AS today_revenue,
+          COALESCE(COUNT(s.id)         FILTER (WHERE (s.sale_date AT TIME ZONE '${TZ}')::date = (NOW() AT TIME ZONE '${TZ}')::date), 0)  AS today_transactions,
+          COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date >= NOW() - INTERVAL '30 days'), 0)  AS month_revenue
         FROM branches b
         LEFT JOIN sales s ON s.branch_id = b.id
         GROUP BY b.id
@@ -167,8 +173,8 @@ exports.getBranchComparison = async (req, res) => {
       ret AS (
         SELECT
           branch_id,
-          COALESCE(SUM(refund_amount) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS today_returns,
-          COALESCE(SUM(refund_amount) FILTER (WHERE created_at >= LOCALTIMESTAMP - INTERVAL '30 days'), 0) AS month_returns
+          COALESCE(SUM(refund_amount) FILTER (WHERE (created_at AT TIME ZONE '${TZ}')::date = (NOW() AT TIME ZONE '${TZ}')::date), 0) AS today_returns,
+          COALESCE(SUM(refund_amount) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'), 0) AS month_returns
         FROM returns
         GROUP BY branch_id
       )
@@ -220,7 +226,7 @@ exports.getDateRangeReport = async (req, res) => {
         COALESCE(SUM(COALESCE(discount_amount, 0)), 0)   AS total_discounts,
         COALESCE(AVG(total_amount), 0)                   AS avg_sale
       FROM sales
-      WHERE sale_date::date BETWEEN $1::date AND $2::date
+      WHERE (sale_date AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
     `,
       [startDate, endDate, branchId],
@@ -229,7 +235,7 @@ exports.getDateRangeReport = async (req, res) => {
       `
       SELECT COALESCE(SUM(refund_amount), 0) AS total_returns
       FROM returns
-      WHERE created_at::date BETWEEN $1::date AND $2::date
+      WHERE (created_at AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
     `,
       [startDate, endDate, branchId],
@@ -238,24 +244,24 @@ exports.getDateRangeReport = async (req, res) => {
     const dailyRes = await pool.query(
       `
       SELECT
-        sale_date::date           AS date,
-        SUM(total_amount)         AS revenue,
-        COUNT(*)                  AS transactions
+        (sale_date AT TIME ZONE '${TZ}')::date AS date,
+        SUM(total_amount)                      AS revenue,
+        COUNT(*)                               AS transactions
       FROM sales
-      WHERE sale_date::date BETWEEN $1::date AND $2::date
+      WHERE (sale_date AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
-      GROUP BY sale_date::date
+      GROUP BY (sale_date AT TIME ZONE '${TZ}')::date
       ORDER BY date
     `,
       [startDate, endDate, branchId],
     );
     const dailyReturnsRes = await pool.query(
       `
-      SELECT created_at::date AS date, SUM(refund_amount) AS returns
+      SELECT (created_at AT TIME ZONE '${TZ}')::date AS date, SUM(refund_amount) AS returns
       FROM returns
-      WHERE created_at::date BETWEEN $1::date AND $2::date
+      WHERE (created_at AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
-      GROUP BY created_at::date
+      GROUP BY (created_at AT TIME ZONE '${TZ}')::date
     `,
       [startDate, endDate, branchId],
     );
@@ -267,7 +273,7 @@ exports.getDateRangeReport = async (req, res) => {
       const dateKey = toDateKey(r.date);
       const revenue = parseFloat(r.revenue) || 0;
       const returns = returnsByDate[dateKey] || 0;
-      return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
+      return { date: dateKey, revenue: revenue - returns, transactions: parseInt(r.transactions) };
     });
 
     const totalRevenue = parseFloat(summaryRes.rows[0].total_revenue) || 0;
@@ -305,7 +311,7 @@ exports.getProfitSummary = async (req, res) => {
       SELECT COUNT(id) AS total_transactions,
              COALESCE(SUM(total_amount), 0) AS total_revenue
       FROM sales
-      WHERE sale_date::date BETWEEN $1::date AND $2::date
+      WHERE (sale_date AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR branch_id = $3::int)
       `,
       [startDate, endDate, branchId],
@@ -319,7 +325,7 @@ exports.getProfitSummary = async (req, res) => {
         COUNT(*) AS total_items
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.sale_date::date BETWEEN $1::date AND $2::date
+      WHERE (s.sale_date AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR s.branch_id = $3::int)
       `,
       [startDate, endDate, branchId],
@@ -332,7 +338,7 @@ exports.getProfitSummary = async (req, res) => {
         COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
       FROM returns r
       LEFT JOIN return_items ri ON ri.return_id = r.id
-      WHERE r.created_at::date BETWEEN $1::date AND $2::date
+      WHERE (r.created_at AT TIME ZONE '${TZ}')::date BETWEEN $1::date AND $2::date
         AND ($3::int IS NULL OR r.branch_id = $3::int)
       `,
       [startDate, endDate, branchId],
@@ -382,7 +388,7 @@ exports.getProfitByProduct = async (req, res) => {
         JOIN product_variants pv ON si.variant_id  = pv.id
         JOIN products p          ON pv.product_id  = p.id
         JOIN sales s             ON si.sale_id     = s.id
-        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE s.sale_date >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR s.branch_id = $2::int)
         GROUP BY p.name, pv.id, pv.sku, pv.size, pv.color
       ),
@@ -395,7 +401,7 @@ exports.getProfitByProduct = async (req, res) => {
         JOIN returns r        ON ri.return_id  = r.id
         JOIN sale_items si2   ON ri.sale_item_id = si2.id
         JOIN product_variants pv ON si2.variant_id = pv.id
-        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE r.created_at >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR r.branch_id = $2::int)
         GROUP BY pv.id
       )
@@ -446,7 +452,7 @@ exports.getProfitByCategory = async (req, res) => {
         JOIN products p          ON pv.product_id = p.id
         JOIN categories c        ON p.category_id = c.id
         JOIN sales s              ON si.sale_id    = s.id
-        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE s.sale_date >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR s.branch_id = $2::int)
         GROUP BY c.id, c.name
       ),
@@ -461,7 +467,7 @@ exports.getProfitByCategory = async (req, res) => {
         JOIN product_variants pv ON si2.variant_id = pv.id
         JOIN products p       ON pv.product_id    = p.id
         JOIN categories c     ON p.category_id     = c.id
-        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE r.created_at >= NOW() - ($1 * INTERVAL '1 day')
           AND ($2::int IS NULL OR r.branch_id = $2::int)
         GROUP BY c.id
       )
@@ -500,7 +506,7 @@ exports.getProfitByBranch = async (req, res) => {
       WITH rev AS (
         SELECT branch_id, COUNT(id) AS total_transactions, SUM(total_amount) AS total_revenue
         FROM sales
-        WHERE sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE sale_date >= NOW() - ($1 * INTERVAL '1 day')
         GROUP BY branch_id
       ),
       cost AS (
@@ -508,7 +514,7 @@ exports.getProfitByBranch = async (req, res) => {
                COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS total_cogs
         FROM sale_items si
         JOIN sales s ON si.sale_id = s.id
-        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE s.sale_date >= NOW() - ($1 * INTERVAL '1 day')
         GROUP BY s.branch_id
       ),
       ret AS (
@@ -517,7 +523,7 @@ exports.getProfitByBranch = async (req, res) => {
                COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
         FROM returns r
         LEFT JOIN return_items ri ON ri.return_id = r.id
-        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        WHERE r.created_at >= NOW() - ($1 * INTERVAL '1 day')
         GROUP BY r.branch_id
       )
       SELECT b.id AS branch_id, b.branch_name,
@@ -557,36 +563,36 @@ exports.getProfitTrend = async (req, res) => {
   try {
     const revenueRes = await pool.query(
       `
-      SELECT sale_date::date AS date, SUM(total_amount) AS revenue
+      SELECT (sale_date AT TIME ZONE '${TZ}')::date AS date, SUM(total_amount) AS revenue
       FROM sales
-      WHERE sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+      WHERE sale_date >= NOW() - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR branch_id = $2::int)
-      GROUP BY sale_date::date
+      GROUP BY (sale_date AT TIME ZONE '${TZ}')::date
       `,
       [days, branchId],
     );
     const costRes = await pool.query(
       `
-      SELECT s.sale_date::date AS date,
+      SELECT (s.sale_date AT TIME ZONE '${TZ}')::date AS date,
              COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS cogs
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+      WHERE s.sale_date >= NOW() - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR s.branch_id = $2::int)
-      GROUP BY s.sale_date::date
+      GROUP BY (s.sale_date AT TIME ZONE '${TZ}')::date
       `,
       [days, branchId],
     );
     const returnsRes = await pool.query(
       `
-      SELECT r.created_at::date AS date,
+      SELECT (r.created_at AT TIME ZONE '${TZ}')::date AS date,
              COALESCE(SUM(r.refund_amount), 0) AS returns,
              COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
       FROM returns r
       LEFT JOIN return_items ri ON ri.return_id = r.id
-      WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+      WHERE r.created_at >= NOW() - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR r.branch_id = $2::int)
-      GROUP BY r.created_at::date
+      GROUP BY (r.created_at AT TIME ZONE '${TZ}')::date
       `,
       [days, branchId],
     );
