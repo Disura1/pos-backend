@@ -11,6 +11,13 @@ router.get('/daily-summary',     isOwnerOrManager, rc.getDailySummary);
 router.get('/revenue-by-period', isOwnerOrManager, rc.getRevenueByPeriod);
 router.get('/top-products',      isOwnerOrManager, rc.getTopProducts);
 router.get('/branch-comparison', isOwner,          rc.getBranchComparison);
-router.get('/date-range', isOwnerOrManager, rc.getDateRangeReport);
+router.get('/date-range',        isOwnerOrManager, rc.getDateRangeReport);
+
+// Profit reports — Owner/Manager only (Manager auto-scoped to own branch), never Cashier
+router.get('/profit-summary',      isOwnerOrManager, rc.getProfitSummary);
+router.get('/profit-by-product',   isOwnerOrManager, rc.getProfitByProduct);
+router.get('/profit-by-category',  isOwnerOrManager, rc.getProfitByCategory);
+router.get('/profit-by-branch',    isOwner,          rc.getProfitByBranch);
+router.get('/profit-trend',        isOwnerOrManager, rc.getProfitTrend);
 
 module.exports = router;
