@@ -4,7 +4,7 @@ exports.getDailySummary = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
   if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(
+    const salesRes = await pool.query(
       `
       SELECT
         COUNT(id)                                        AS total_transactions,
@@ -17,7 +17,22 @@ exports.getDailySummary = async (req, res) => {
     `,
       [branchId],
     );
-    res.json(result.rows[0]);
+    const returnsRes = await pool.query(
+      `
+      SELECT COALESCE(SUM(refund_amount), 0) AS total_returns
+      FROM returns
+      WHERE created_at::date = CURRENT_DATE
+        AND ($1::int IS NULL OR branch_id = $1::int)
+    `,
+      [branchId],
+    );
+    const totalRevenue = parseFloat(salesRes.rows[0].total_revenue) || 0;
+    const totalReturns = parseFloat(returnsRes.rows[0].total_returns) || 0;
+    res.json({
+      ...salesRes.rows[0],
+      total_revenue: totalRevenue - totalReturns,
+      total_returns: totalReturns,
+    });
   } catch (err) {
     console.error("getDailySummary error:", err.message);
     res.status(500).json({ error: "Something went wrong. Please try again." });
@@ -29,7 +44,7 @@ exports.getRevenueByPeriod = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
   if (req.user.role === "Manager") branchId = req.user.branchId;
   try {
-    const result = await pool.query(
+    const salesRes = await pool.query(
       `
       SELECT
         sale_date::date                    AS date,
@@ -39,11 +54,39 @@ exports.getRevenueByPeriod = async (req, res) => {
       WHERE sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
         AND ($2::int IS NULL OR branch_id = $2::int)
       GROUP BY sale_date::date
-      ORDER BY date ASC
-    `,
+      `,
       [days, branchId],
     );
-    res.json(result.rows);
+    const returnsRes = await pool.query(
+      `
+      SELECT created_at::date AS date, COALESCE(SUM(refund_amount), 0) AS returns
+      FROM returns
+      WHERE created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        AND ($2::int IS NULL OR branch_id = $2::int)
+      GROUP BY created_at::date
+      `,
+      [days, branchId],
+    );
+    const returnsByDate = {};
+    returnsRes.rows.forEach((r) => {
+      returnsByDate[String(r.date).slice(0, 10)] = parseFloat(r.returns) || 0;
+    });
+
+    const merged = salesRes.rows.map((r) => {
+      const dateKey = String(r.date).slice(0, 10);
+      const revenue = parseFloat(r.revenue) || 0;
+      const returns = returnsByDate[dateKey] || 0;
+      return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
+    });
+    // Include days that had ONLY returns and no sales, so those aren't silently dropped
+    Object.keys(returnsByDate).forEach((dateKey) => {
+      if (!merged.find((m) => String(m.date).slice(0, 10) === dateKey)) {
+        merged.push({ date: dateKey, revenue: -returnsByDate[dateKey], transactions: 0 });
+      }
+    });
+    merged.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    res.json(merged);
   } catch (err) {
     console.error("getRevenueByPeriod error:", err.message);
     res.status(500).json({ error: "Something went wrong. Please try again." });
@@ -58,18 +101,38 @@ exports.getTopProducts = async (req, res) => {
   try {
     const result = await pool.query(
       `
+      WITH sold AS (
+        SELECT
+          p.name AS product_name, pv.id AS variant_id, pv.sku, pv.size, pv.color,
+          SUM(si.quantity)                 AS gross_sold,
+          SUM(si.quantity * si.unit_price) AS gross_revenue
+        FROM sale_items si
+        JOIN product_variants pv ON si.variant_id  = pv.id
+        JOIN products p          ON pv.product_id  = p.id
+        JOIN sales s             ON si.sale_id     = s.id
+        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR s.branch_id = $2::int)
+        GROUP BY p.name, pv.id, pv.sku, pv.size, pv.color
+      ),
+      returned AS (
+        SELECT
+          pv.id AS variant_id,
+          SUM(ri.quantity)                 AS returned_qty,
+          SUM(ri.quantity * ri.unit_price) AS returned_revenue
+        FROM return_items ri
+        JOIN returns r        ON ri.return_id  = r.id
+        JOIN sale_items si2   ON ri.sale_item_id = si2.id
+        JOIN product_variants pv ON si2.variant_id = pv.id
+        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR r.branch_id = $2::int)
+        GROUP BY pv.id
+      )
       SELECT
-        p.name                                  AS product_name,
-        pv.sku, pv.size, pv.color,
-        SUM(si.quantity)                        AS total_sold,
-        SUM(si.quantity * si.unit_price)        AS total_revenue
-      FROM sale_items si
-      JOIN product_variants pv ON si.variant_id  = pv.id
-      JOIN products p          ON pv.product_id  = p.id
-      JOIN sales s             ON si.sale_id     = s.id
-      WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
-        AND ($2::int IS NULL OR s.branch_id = $2::int)
-      GROUP BY p.name, pv.sku, pv.size, pv.color
+        sold.product_name, sold.sku, sold.size, sold.color,
+        (sold.gross_sold - COALESCE(returned.returned_qty, 0))       AS total_sold,
+        (sold.gross_revenue - COALESCE(returned.returned_revenue, 0)) AS total_revenue
+      FROM sold
+      LEFT JOIN returned ON returned.variant_id = sold.variant_id
       ORDER BY total_sold DESC
       LIMIT $3
     `,
@@ -85,16 +148,33 @@ exports.getTopProducts = async (req, res) => {
 exports.getBranchComparison = async (req, res) => {
   try {
     const result = await pool.query(`
+      WITH rev AS (
+        SELECT
+          b.id,
+          COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_revenue,
+          COALESCE(COUNT(s.id)         FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_transactions,
+          COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date >= LOCALTIMESTAMP - INTERVAL '30 days'), 0)  AS month_revenue
+        FROM branches b
+        LEFT JOIN sales s ON s.branch_id = b.id
+        GROUP BY b.id
+      ),
+      ret AS (
+        SELECT
+          branch_id,
+          COALESCE(SUM(refund_amount) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS today_returns,
+          COALESCE(SUM(refund_amount) FILTER (WHERE created_at >= LOCALTIMESTAMP - INTERVAL '30 days'), 0) AS month_returns
+        FROM returns
+        GROUP BY branch_id
+      )
       SELECT
-        b.id,
-        b.branch_name,
-        COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_revenue,
-        COALESCE(COUNT(s.id)         FILTER (WHERE s.sale_date::date = CURRENT_DATE), 0)  AS today_transactions,
-        COALESCE(SUM(s.total_amount) FILTER (WHERE s.sale_date >= LOCALTIMESTAMP - INTERVAL '30 days'), 0)  AS month_revenue
+        b.id, b.branch_name,
+        (rev.today_revenue - COALESCE(ret.today_returns, 0)) AS today_revenue,
+        rev.today_transactions,
+        (rev.month_revenue - COALESCE(ret.month_returns, 0)) AS month_revenue
       FROM branches b
-      LEFT JOIN sales s ON s.branch_id = b.id
+      LEFT JOIN rev ON rev.id = b.id
+      LEFT JOIN ret ON ret.branch_id = b.id
       WHERE COALESCE(b.is_active, true) = true
-      GROUP BY b.id, b.branch_name
       ORDER BY month_revenue DESC
     `);
     res.json(result.rows);
@@ -125,7 +205,8 @@ exports.getDateRangeReport = async (req, res) => {
         .status(400)
         .json({ error: "startDate cannot be after endDate" });
     }
-    const summary = await pool.query(
+
+    const summaryRes = await pool.query(
       `
       SELECT
         COUNT(id)                                        AS total_transactions,
@@ -138,8 +219,17 @@ exports.getDateRangeReport = async (req, res) => {
     `,
       [startDate, endDate, branchId],
     );
+    const returnsSummaryRes = await pool.query(
+      `
+      SELECT COALESCE(SUM(refund_amount), 0) AS total_returns
+      FROM returns
+      WHERE created_at::date BETWEEN $1::date AND $2::date
+        AND ($3::int IS NULL OR branch_id = $3::int)
+    `,
+      [startDate, endDate, branchId],
+    );
 
-    const daily = await pool.query(
+    const dailyRes = await pool.query(
       `
       SELECT
         sale_date::date           AS date,
@@ -153,8 +243,38 @@ exports.getDateRangeReport = async (req, res) => {
     `,
       [startDate, endDate, branchId],
     );
+    const dailyReturnsRes = await pool.query(
+      `
+      SELECT created_at::date AS date, SUM(refund_amount) AS returns
+      FROM returns
+      WHERE created_at::date BETWEEN $1::date AND $2::date
+        AND ($3::int IS NULL OR branch_id = $3::int)
+      GROUP BY created_at::date
+    `,
+      [startDate, endDate, branchId],
+    );
+    const returnsByDate = {};
+    dailyReturnsRes.rows.forEach((r) => {
+      returnsByDate[String(r.date).slice(0, 10)] = parseFloat(r.returns) || 0;
+    });
+    const daily = dailyRes.rows.map((r) => {
+      const dateKey = String(r.date).slice(0, 10);
+      const revenue = parseFloat(r.revenue) || 0;
+      const returns = returnsByDate[dateKey] || 0;
+      return { date: r.date, revenue: revenue - returns, transactions: parseInt(r.transactions) };
+    });
 
-    res.json({ summary: summary.rows[0], daily: daily.rows });
+    const totalRevenue = parseFloat(summaryRes.rows[0].total_revenue) || 0;
+    const totalReturns = parseFloat(returnsSummaryRes.rows[0].total_returns) || 0;
+
+    res.json({
+      summary: {
+        ...summaryRes.rows[0],
+        total_revenue: totalRevenue - totalReturns,
+        total_returns: totalReturns,
+      },
+      daily,
+    });
   } catch (err) {
     console.error("getDateRangeReport error:", err.message);
     res.status(500).json({ error: "Something went wrong. Please try again." });
@@ -174,7 +294,6 @@ exports.getProfitSummary = async (req, res) => {
       return res.status(400).json({ error: "Dates must be in YYYY-MM-DD format" });
     }
 
-    // Revenue comes straight from `sales` (post-discount, the real amount collected)
     const revenueRes = await pool.query(
       `
       SELECT COUNT(id) AS total_transactions,
@@ -186,8 +305,6 @@ exports.getProfitSummary = async (req, res) => {
       [startDate, endDate, branchId],
     );
 
-    // Cost comes from a separate query against sale_items — kept independent
-    // from the revenue query above so joining line items never inflates revenue.
     const costRes = await pool.query(
       `
       SELECT
@@ -202,17 +319,36 @@ exports.getProfitSummary = async (req, res) => {
       [startDate, endDate, branchId],
     );
 
+    const returnsRes = await pool.query(
+      `
+      SELECT
+        COALESCE(SUM(r.refund_amount), 0) AS total_returns,
+        COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
+      FROM returns r
+      LEFT JOIN return_items ri ON ri.return_id = r.id
+      WHERE r.created_at::date BETWEEN $1::date AND $2::date
+        AND ($3::int IS NULL OR r.branch_id = $3::int)
+      `,
+      [startDate, endDate, branchId],
+    );
+
     const totalRevenue = parseFloat(revenueRes.rows[0].total_revenue) || 0;
     const totalCogs = parseFloat(costRes.rows[0].total_cogs) || 0;
-    const grossProfit = totalRevenue - totalCogs;
-    const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+    const totalReturns = parseFloat(returnsRes.rows[0].total_returns) || 0;
+    const returnedCogs = parseFloat(returnsRes.rows[0].returned_cogs) || 0;
+
+    const netRevenue = totalRevenue - totalReturns;
+    const netCogs = totalCogs - returnedCogs;
+    const grossProfit = netRevenue - netCogs;
+    const marginPct = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
 
     res.json({
       total_transactions: parseInt(revenueRes.rows[0].total_transactions) || 0,
-      total_revenue: totalRevenue,
-      total_cogs: totalCogs,
+      total_revenue: netRevenue,
+      total_cogs: netCogs,
       gross_profit: grossProfit,
       margin_pct: marginPct,
+      total_returns: totalReturns,
       items_missing_cost: parseInt(costRes.rows[0].items_missing_cost) || 0,
       total_items: parseInt(costRes.rows[0].total_items) || 0,
     });
@@ -230,22 +366,41 @@ exports.getProfitByProduct = async (req, res) => {
   try {
     const result = await pool.query(
       `
+      WITH sold AS (
+        SELECT
+          p.name AS product_name, pv.id AS variant_id, pv.sku, pv.size, pv.color,
+          SUM(si.quantity)                 AS gross_sold,
+          SUM(si.quantity * si.unit_price) AS gross_revenue,
+          COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS gross_cogs
+        FROM sale_items si
+        JOIN product_variants pv ON si.variant_id  = pv.id
+        JOIN products p          ON pv.product_id  = p.id
+        JOIN sales s             ON si.sale_id     = s.id
+        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR s.branch_id = $2::int)
+        GROUP BY p.name, pv.id, pv.sku, pv.size, pv.color
+      ),
+      returned AS (
+        SELECT
+          pv.id AS variant_id,
+          SUM(ri.quantity * ri.unit_price) AS returned_revenue,
+          COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
+        FROM return_items ri
+        JOIN returns r        ON ri.return_id  = r.id
+        JOIN sale_items si2   ON ri.sale_item_id = si2.id
+        JOIN product_variants pv ON si2.variant_id = pv.id
+        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR r.branch_id = $2::int)
+        GROUP BY pv.id
+      )
       SELECT
-        p.name AS product_name,
-        pv.sku, pv.size, pv.color,
-        SUM(si.quantity) AS total_sold,
-        SUM(si.quantity * si.unit_price) AS total_revenue,
-        COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS total_cogs,
-        COUNT(*) FILTER (WHERE si.unit_cost IS NULL) AS items_missing_cost
-      FROM sale_items si
-      JOIN product_variants pv ON si.variant_id = pv.id
-      JOIN products p          ON pv.product_id = p.id
-      JOIN sales s              ON si.sale_id    = s.id
-      WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
-        AND ($2::int IS NULL OR s.branch_id = $2::int)
-      GROUP BY p.name, pv.sku, pv.size, pv.color
-      ORDER BY (SUM(si.quantity * si.unit_price)
-                - COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0)) DESC
+        sold.product_name, sold.sku, sold.size, sold.color, sold.gross_sold AS total_sold,
+        (sold.gross_revenue - COALESCE(returned.returned_revenue, 0)) AS total_revenue,
+        (sold.gross_cogs    - COALESCE(returned.returned_cogs, 0))    AS total_cogs
+      FROM sold
+      LEFT JOIN returned ON returned.variant_id = sold.variant_id
+      ORDER BY (sold.gross_revenue - COALESCE(returned.returned_revenue, 0))
+                - (sold.gross_cogs - COALESCE(returned.returned_cogs, 0)) DESC
       LIMIT $3
       `,
       [days, branchId, limit],
@@ -274,19 +429,42 @@ exports.getProfitByCategory = async (req, res) => {
   try {
     const result = await pool.query(
       `
+      WITH sold AS (
+        SELECT
+          c.id AS category_id, c.name AS category_name,
+          SUM(si.quantity)                 AS gross_sold,
+          SUM(si.quantity * si.unit_price) AS gross_revenue,
+          COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS gross_cogs
+        FROM sale_items si
+        JOIN product_variants pv ON si.variant_id = pv.id
+        JOIN products p          ON pv.product_id = p.id
+        JOIN categories c        ON p.category_id = c.id
+        JOIN sales s              ON si.sale_id    = s.id
+        WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR s.branch_id = $2::int)
+        GROUP BY c.id, c.name
+      ),
+      returned AS (
+        SELECT
+          c.id AS category_id,
+          SUM(ri.quantity * ri.unit_price) AS returned_revenue,
+          COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
+        FROM return_items ri
+        JOIN returns r        ON ri.return_id    = r.id
+        JOIN sale_items si2   ON ri.sale_item_id  = si2.id
+        JOIN product_variants pv ON si2.variant_id = pv.id
+        JOIN products p       ON pv.product_id    = p.id
+        JOIN categories c     ON p.category_id     = c.id
+        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+          AND ($2::int IS NULL OR r.branch_id = $2::int)
+        GROUP BY c.id
+      )
       SELECT
-        c.name AS category_name,
-        SUM(si.quantity) AS total_sold,
-        SUM(si.quantity * si.unit_price) AS total_revenue,
-        COALESCE(SUM(si.unit_cost * si.quantity) FILTER (WHERE si.unit_cost IS NOT NULL), 0) AS total_cogs
-      FROM sale_items si
-      JOIN product_variants pv ON si.variant_id = pv.id
-      JOIN products p          ON pv.product_id = p.id
-      JOIN categories c        ON p.category_id = c.id
-      JOIN sales s              ON si.sale_id    = s.id
-      WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
-        AND ($2::int IS NULL OR s.branch_id = $2::int)
-      GROUP BY c.name
+        sold.category_name, sold.gross_sold AS total_sold,
+        (sold.gross_revenue - COALESCE(returned.returned_revenue, 0)) AS total_revenue,
+        (sold.gross_cogs    - COALESCE(returned.returned_cogs, 0))    AS total_cogs
+      FROM sold
+      LEFT JOIN returned ON returned.category_id = sold.category_id
       ORDER BY total_revenue DESC
       `,
       [days, branchId],
@@ -326,14 +504,24 @@ exports.getProfitByBranch = async (req, res) => {
         JOIN sales s ON si.sale_id = s.id
         WHERE s.sale_date >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
         GROUP BY s.branch_id
+      ),
+      ret AS (
+        SELECT r.branch_id,
+               COALESCE(SUM(r.refund_amount), 0) AS total_returns,
+               COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
+        FROM returns r
+        LEFT JOIN return_items ri ON ri.return_id = r.id
+        WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        GROUP BY r.branch_id
       )
       SELECT b.id AS branch_id, b.branch_name,
              COALESCE(rev.total_transactions, 0) AS total_transactions,
-             COALESCE(rev.total_revenue, 0)      AS total_revenue,
-             COALESCE(cost.total_cogs, 0)        AS total_cogs
+             (COALESCE(rev.total_revenue, 0) - COALESCE(ret.total_returns, 0))  AS total_revenue,
+             (COALESCE(cost.total_cogs, 0)  - COALESCE(ret.returned_cogs, 0))  AS total_cogs
       FROM branches b
       LEFT JOIN rev  ON rev.branch_id  = b.id
       LEFT JOIN cost ON cost.branch_id = b.id
+      LEFT JOIN ret  ON ret.branch_id  = b.id
       WHERE COALESCE(b.is_active, true) = true
       ORDER BY total_revenue DESC
       `,
@@ -383,14 +571,40 @@ exports.getProfitTrend = async (req, res) => {
       `,
       [days, branchId],
     );
+    const returnsRes = await pool.query(
+      `
+      SELECT r.created_at::date AS date,
+             COALESCE(SUM(r.refund_amount), 0) AS returns,
+             COALESCE(SUM(ri.unit_cost * ri.quantity) FILTER (WHERE ri.unit_cost IS NOT NULL), 0) AS returned_cogs
+      FROM returns r
+      LEFT JOIN return_items ri ON ri.return_id = r.id
+      WHERE r.created_at >= LOCALTIMESTAMP - ($1 * INTERVAL '1 day')
+        AND ($2::int IS NULL OR r.branch_id = $2::int)
+      GROUP BY r.created_at::date
+      `,
+      [days, branchId],
+    );
+
+    const revenueByDate = {};
+    revenueRes.rows.forEach((r) => { revenueByDate[String(r.date).slice(0, 10)] = parseFloat(r.revenue) || 0; });
     const costByDate = {};
     costRes.rows.forEach((r) => { costByDate[String(r.date).slice(0, 10)] = parseFloat(r.cogs) || 0; });
+    const returnsByDate = {};
+    returnsRes.rows.forEach((r) => {
+      returnsByDate[String(r.date).slice(0, 10)] = {
+        returns: parseFloat(r.returns) || 0,
+        returnedCogs: parseFloat(r.returned_cogs) || 0,
+      };
+    });
 
-    const merged = revenueRes.rows.map((r) => {
-      const dateKey = String(r.date).slice(0, 10);
-      const revenue = parseFloat(r.revenue) || 0;
+    const allDates = new Set([...Object.keys(revenueByDate), ...Object.keys(returnsByDate)]);
+    const merged = Array.from(allDates).map((dateKey) => {
+      const grossRevenue = revenueByDate[dateKey] || 0;
       const cogs = costByDate[dateKey] || 0;
-      return { date: r.date, revenue, cogs, profit: revenue - cogs };
+      const ret = returnsByDate[dateKey] || { returns: 0, returnedCogs: 0 };
+      const revenue = grossRevenue - ret.returns;
+      const netCogs = cogs - ret.returnedCogs;
+      return { date: dateKey, revenue, cogs: netCogs, profit: revenue - netCogs };
     }).sort((a, b) => new Date(a.date) - new Date(b.date));
 
     res.json(merged);
