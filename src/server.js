@@ -14,6 +14,7 @@ const saleRoutes = require("./routes/saleRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const discountRoutes = require("./routes/discountRoutes");
 const heldSaleRoutes = require("./routes/heldSaleRoutes");
+const returnRoutes = require("./routes/returnRoutes");
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use("/api/sales", saleRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/discounts", discountRoutes);
 app.use("/api/held-sales", heldSaleRoutes);
+app.use("/api/returns", returnRoutes);
 
 app.get("/api/status", (req, res) =>
   res.json({ message: "Teen Girl POS API is running!" }),
