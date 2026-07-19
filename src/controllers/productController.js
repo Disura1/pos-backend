@@ -313,7 +313,7 @@ exports.getVariants = async (req, res) => {
   const { productId } = req.params;
   try {
     const result = await pool.query(
-      `SELECT pv.*, COALESCE(json_agg(json_build_object('branch_id', i.branch_id, 'branch_name', b.branch_name, 'stock_qty', i.stock_qty)) FILTER (WHERE i.id IS NOT NULL AND i.is_active = true), '[]') AS stock
+      `SELECT pv.*, COALESCE(json_agg(json_build_object('branch_id', i.branch_id, 'branch_name', b.branch_name, 'stock_qty', i.stock_qty, 'avg_cost', i.avg_cost)) FILTER (WHERE i.id IS NOT NULL AND i.is_active = true), '[]') AS stock
        FROM product_variants pv
        LEFT JOIN inventory i ON pv.id = i.variant_id AND i.is_active = true
        LEFT JOIN branches b ON i.branch_id = b.id
@@ -470,7 +470,8 @@ exports.getVariantsByBranch = async (req, res) => {
             json_build_object(
               'branch_id', i.branch_id,
               'branch_name', b.branch_name,
-              'stock_qty', i.stock_qty
+              'stock_qty', i.stock_qty,
+              'avg_cost', i.avg_cost
             )
           ) AS stock
         FROM product_variants pv
@@ -488,7 +489,8 @@ exports.getVariantsByBranch = async (req, res) => {
             json_build_object(
               'branch_id', i.branch_id,
               'branch_name', b.branch_name,
-              'stock_qty', i.stock_qty
+              'stock_qty', i.stock_qty,
+              'avg_cost', i.avg_cost
             )
           ) FILTER (WHERE i.id IS NOT NULL), '[]') AS stock
         FROM product_variants pv
