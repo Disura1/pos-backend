@@ -163,6 +163,16 @@ exports.processReturn = async (req, res) => {
     );
     const returnId = returnRes.rows[0].id;
 
+    // Build a standard return number matching the branch's receipt prefix,
+    // e.g. TGMN-RE-000001 — instantly recognizable as a return, not a sale.
+    const prefixRes = await client.query(
+      "SELECT COALESCE(receipt_prefix, 'TG') AS prefix FROM branches WHERE id = $1",
+      [branchId],
+    );
+    const prefix = prefixRes.rows[0]?.prefix || "TG";
+    const returnNumber = `${prefix}-RE-${String(returnId).padStart(6, "0")}`;
+    await client.query("UPDATE returns SET return_number = $1 WHERE id = $2", [returnNumber, returnId]);
+
     for (const line of lineDetails) {
       await client.query(
         `INSERT INTO return_items (return_id, sale_item_id, quantity, unit_price, unit_cost)
@@ -190,6 +200,7 @@ exports.processReturn = async (req, res) => {
     await client.query("COMMIT");
     res.json({
       returnId,
+      returnNumber,
       refundAmount: refundTotal,
       refundMethod: refundMethod || sale.payment_method || "cash",
       originalReceiptNumber: sale.receipt_number,

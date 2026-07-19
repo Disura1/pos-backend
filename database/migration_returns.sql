@@ -21,3 +21,5 @@ CREATE TABLE IF NOT EXISTS return_items (
 CREATE INDEX IF NOT EXISTS idx_returns_branch ON returns(branch_id);
 CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(original_sale_id);
 CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id);
+
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS return_number VARCHAR(50);
