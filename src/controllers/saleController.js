@@ -137,15 +137,11 @@ exports.checkout = async (req, res) => {
     ]);
 
     for (const item of priced) {
-      await client.query(
-        `INSERT INTO sale_items (sale_id, variant_id, quantity, unit_price, total_price)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [saleId, item.variantId, item.qty, item.unitPrice, item.unitPrice * item.qty],
-      );
-
-      // Lock the inventory row and check stock before deducting
+      // Lock the inventory row and check stock before deducting — this same
+      // locked row also gives us the branch's current average cost, which we
+      // snapshot permanently onto this sale_item and never recalculate again.
       const stockCheck = await client.query(
-        `SELECT stock_qty FROM inventory
+        `SELECT stock_qty, avg_cost FROM inventory
          WHERE variant_id = $1 AND branch_id = $2
          FOR UPDATE`,
         [item.variantId, safeBranchId],
@@ -156,6 +152,15 @@ exports.checkout = async (req, res) => {
         e.status = 400;
         throw e;
       }
+      const unitCost = stockCheck.rows[0]?.avg_cost != null
+        ? parseFloat(stockCheck.rows[0].avg_cost) : null;
+
+      await client.query(
+        `INSERT INTO sale_items (sale_id, variant_id, quantity, unit_price, total_price, unit_cost)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [saleId, item.variantId, item.qty, item.unitPrice, item.unitPrice * item.qty, unitCost],
+      );
+
       await client.query(
         `UPDATE inventory SET stock_qty = stock_qty - $1
          WHERE variant_id=$2 AND branch_id=$3`,
@@ -260,8 +265,11 @@ exports.getSaleDetail = async (req, res) => {
        WHERE s.id = $1`,
       [id],
     );
+    // Explicit column list — deliberately excludes unit_cost. Cost/profit
+    // data belongs in dedicated profit reports (Owner/Manager only), never
+    // in a receipt or sale-detail view that any role (including Cashier) can open.
     const items = await pool.query(
-      `SELECT si.*,
+      `SELECT si.id, si.sale_id, si.variant_id, si.quantity, si.unit_price, si.total_price,
               pv.sku, pv.size, pv.color,
               p.name AS product_name
        FROM sale_items si
