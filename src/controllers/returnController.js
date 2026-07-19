@@ -46,6 +46,35 @@ exports.lookupSale = async (req, res) => {
   }
 };
 
+exports.searchSales = async (req, res) => {
+  const { query } = req.query;
+  if (!query || query.trim().length < 2) {
+    return res.status(400).json({ error: "Enter at least 2 characters to search" });
+  }
+  let branchId = null;
+  if (req.user.role === "Cashier") branchId = req.user.branchId;
+  try {
+    const result = await pool.query(
+      `
+      SELECT s.id, s.receipt_number, s.sale_date, s.total_amount,
+             b.branch_name, COALESCE(u.full_name, u.username) AS cashier_name
+      FROM sales s
+      JOIN branches b ON s.branch_id = b.id
+      LEFT JOIN users u ON s.cashier_id = u.id
+      WHERE s.receipt_number ILIKE '%' || $1 || '%'
+        AND ($2::int IS NULL OR s.branch_id = $2)
+      ORDER BY s.sale_date DESC
+      LIMIT 20
+      `,
+      [query.trim(), branchId],
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("searchSales error:", err.message);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
+  }
+};
+
 exports.processReturn = async (req, res) => {
   const { saleId, items, reason, refundMethod } = req.body;
   if (!saleId) return res.status(400).json({ error: "Sale ID is required" });

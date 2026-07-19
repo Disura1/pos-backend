@@ -8,6 +8,7 @@ const isAnyStaff = authorize('Owner', 'Admin', 'Manager', 'Cashier');
 
 router.use(authenticate);
 router.get('/lookup', isAnyStaff, rc.lookupSale);
+router.get('/search', isAnyStaff, rc.searchSales);
 router.post('/', isCashier, rc.processReturn);
 router.get('/history', isAnyStaff, rc.getReturnHistory);
 
