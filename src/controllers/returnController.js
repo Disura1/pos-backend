@@ -222,13 +222,18 @@ exports.getReturnHistory = async (req, res) => {
   if (req.user.role === "Cashier" || req.user.role === "Manager") {
     branchId = req.user.branchId;
   }
-  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+  const { startDate, endDate, search } = req.query;
+  const limit = Math.min(parseInt(req.query.limit) || 200, 1000);
   try {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if ((startDate && !dateRegex.test(startDate)) || (endDate && !dateRegex.test(endDate))) {
+      return res.status(400).json({ error: "Dates must be in YYYY-MM-DD format" });
+    }
     const result = await pool.query(
       `
-      SELECT r.id, r.reason, r.refund_amount, r.refund_method, r.created_at,
+      SELECT r.id, r.return_number, r.reason, r.refund_amount, r.refund_method, r.created_at,
              s.receipt_number AS original_receipt_number,
-             b.branch_name,
+             b.branch_name, b.id AS branch_id,
              COALESCE(u.full_name, u.username) AS processed_by_name,
              COUNT(ri.id) AS item_count
       FROM returns r
@@ -237,11 +242,14 @@ exports.getReturnHistory = async (req, res) => {
       LEFT JOIN users u ON r.processed_by = u.id
       LEFT JOIN return_items ri ON ri.return_id = r.id
       WHERE ($1::int IS NULL OR r.branch_id = $1)
-      GROUP BY r.id, s.receipt_number, b.branch_name, u.full_name, u.username
+        AND ($2::date IS NULL OR r.created_at::date >= $2::date)
+        AND ($3::date IS NULL OR r.created_at::date <= $3::date)
+        AND ($4::text IS NULL OR r.return_number ILIKE '%' || $4 || '%' OR s.receipt_number ILIKE '%' || $4 || '%')
+      GROUP BY r.id, s.receipt_number, b.branch_name, b.id, u.full_name, u.username
       ORDER BY r.created_at DESC
-      LIMIT $2
+      LIMIT $5
       `,
-      [branchId, limit],
+      [branchId, startDate || null, endDate || null, search?.trim() || null, limit],
     );
     res.json(result.rows);
   } catch (err) {
