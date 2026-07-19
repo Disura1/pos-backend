@@ -220,7 +220,7 @@ exports.quickCreateProduct = async (req, res) => {
   const {
     name, description, base_price, category_id,
     sku, size, color, barcode, variant_price,
-    branch_id, quantity, note,
+    branch_id, quantity, unit_cost, note,
   } = req.body;
 
   if (!name || !name.trim())
@@ -274,21 +274,24 @@ exports.quickCreateProduct = async (req, res) => {
     );
     const variant = variantRes.rows[0];
 
+    const initialCost = (unit_cost !== undefined && unit_cost !== null && unit_cost !== "")
+      ? parseFloat(unit_cost) : null;
+
     const branches = await client.query("SELECT id FROM branches WHERE is_active = true");
     for (const b of branches.rows) {
       const isOwningBranch = b.id === parseInt(branch_id);
       await client.query(
-        `INSERT INTO inventory (variant_id, branch_id, stock_qty, is_active)
-         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-        [variant.id, b.id, isOwningBranch ? qty : 0, isOwningBranch],
+        `INSERT INTO inventory (variant_id, branch_id, stock_qty, avg_cost, is_active)
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+        [variant.id, b.id, isOwningBranch ? qty : 0, isOwningBranch ? initialCost : null, isOwningBranch],
       );
     }
 
     if (qty > 0) {
       await client.query(
-        `INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, note, created_by)
-         VALUES ($1, $2, 'receive', $3, $4, $5)`,
-        [variant.id, branch_id, qty, note || "Initial stock receive", req.user.id],
+        `INSERT INTO stock_movements (variant_id, branch_id, movement_type, quantity, unit_cost, note, created_by)
+         VALUES ($1, $2, 'receive', $3, $4, $5, $6)`,
+        [variant.id, branch_id, qty, initialCost, note || "Initial stock receive", req.user.id],
       );
     }
 
