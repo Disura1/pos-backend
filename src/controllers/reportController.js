@@ -6,11 +6,21 @@ const pool = require("../config/db");
 // so "today" and daily buckets always match the business's actual calendar day.
 const TZ = "Asia/Colombo";
 
-// Postgres DATE columns come back from `pg` as native JS Date objects.
-// String(dateObject) calls .toString() — a locale string like "Sun Jul 06 2026...",
-// NOT ISO format. Always convert through toISOString() first so date keys/values
-// are reliably "YYYY-MM-DD", whether the input is a Date object or already a string.
-const toDateKey = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10));
+// pg constructs Date objects for DATE columns using the local system clock
+// (proven via debug logging — a July 18 local-midnight date came back as
+// 2026-07-17T18:30:00.000Z, which is exactly July 18 00:00 in Sri Lanka
+// expressed in UTC). Reading it back with .toISOString() converts to UTC
+// and rolls it back a day. Always read with the LOCAL getters instead —
+// that matches how the Date object was built, so nothing drifts.
+const toDateKey = (d) => {
+  if (d instanceof Date) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  return String(d).slice(0, 10);
+};
 
 exports.getDailySummary = async (req, res) => {
   let branchId = req.query.branchId ? parseInt(req.query.branchId) : null;
