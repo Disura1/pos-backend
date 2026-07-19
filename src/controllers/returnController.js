@@ -7,7 +7,8 @@ exports.lookupSale = async (req, res) => {
   }
   try {
     const saleRes = await pool.query(
-      `SELECT s.*, b.branch_name FROM sales s JOIN branches b ON s.branch_id = b.id WHERE s.receipt_number = $1`,
+      `SELECT s.*, b.branch_name, b.address AS branch_address, b.phone AS branch_phone
+       FROM sales s JOIN branches b ON s.branch_id = b.id WHERE s.receipt_number = $1`,
       [receiptNumber.trim()],
     );
     if (!saleRes.rows.length) {
