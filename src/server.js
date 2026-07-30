@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 const pool = require("./config/db");
@@ -18,12 +19,27 @@ const returnRoutes = require("./routes/returnRoutes");
 
 const app = express();
 
-app.use(
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "app://.",  // Electron file protocol
+  process.env.RENDER_EXTERNAL_URL || null,  // Render sets this automatically
+  process.env.CORS_ORIGIN || null,          // manual override if needed
+].filter(Boolean);
+
+app.use((req, res, next) => {
   cors({
-    origin: ["http://localhost:3000", "http://localhost:5173", "app://."],
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // same-origin / non-browser
+      if (allowedOrigins.includes(origin)) return cb(null, true); // whitelist
+      // Allow when the web app is served from this same server (any IP/hostname)
+      const serverOrigin = `${req.protocol}://${req.headers.host}`;
+      if (origin === serverOrigin) return cb(null, true);
+      cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
     credentials: true,
-  }),
-);
+  })(req, res, next);
+});
 app.use(express.json({ limit: '1mb' }));
 
 // Rate limiter — max 10 login attempts per 15 minutes per IP
@@ -53,6 +69,14 @@ app.use("/api/returns", returnRoutes);
 app.get("/api/status", (req, res) =>
   res.json({ message: "Teen Girl POS API is running!" }),
 );
+
+// Serve web frontend (built by `npm run build:web` in pos-desktop)
+const PUBLIC_DIR = path.join(__dirname, "../public");
+app.use(express.static(PUBLIC_DIR));
+// SPA fallback — all non-API routes return index.html
+app.get(/^(?!\/api).*/, (req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "index.html"));
+});
 
 // Global error handler — hide raw DB errors in production
 app.use((err, req, res, next) => {
