@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS branches (
   branch_name VARCHAR(100) NOT NULL,
   address TEXT,
   phone VARCHAR(20),
+  receipt_prefix VARCHAR(20),
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS product_variants (
   color VARCHAR(50),
   barcode VARCHAR(100) UNIQUE,
   variant_price DECIMAL(10,2),
+  is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS inventory (
   stock_qty INTEGER DEFAULT 0,
   low_stock_threshold INTEGER DEFAULT 5,
   avg_cost NUMERIC(10,2),
+  is_active BOOLEAN DEFAULT true,
   UNIQUE(variant_id, branch_id)
 );
 
