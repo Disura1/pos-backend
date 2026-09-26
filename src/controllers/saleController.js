@@ -4,6 +4,7 @@ exports.checkout = async (req, res) => {
   const {
     cart,
     discountId,
+    adhocDiscountAmount,
     paymentMethod,
     amountTendered,
     branchId,
@@ -69,10 +70,11 @@ exports.checkout = async (req, res) => {
     // ---- 2. Server computes subtotal — never trust the client's number ----
     const subtotal = priced.reduce((sum, i) => sum + i.unitPrice * i.qty, 0);
 
-    // ---- 3. Server computes the discount from the real discount row ----
+    // ---- 3. Server computes the discount ----
     let discountAmount = 0;
     let safeDiscountId = null;
     if (discountId) {
+      // Owner-set discount: look up from discounts table
       const discRes = await client.query(
         'SELECT id, type, value, min_amount FROM discounts WHERE id = $1 AND is_active = true',
         [discountId],
@@ -92,6 +94,9 @@ exports.checkout = async (req, res) => {
         ? (subtotal * parseFloat(disc.value)) / 100
         : Math.min(parseFloat(disc.value), subtotal);
       safeDiscountId = disc.id;
+    } else if (adhocDiscountAmount && parseFloat(adhocDiscountAmount) > 0) {
+      // Cashier ad-hoc free-input discount (no discount row, no FK)
+      discountAmount = Math.min(parseFloat(adhocDiscountAmount), subtotal);
     }
 
     const total = Math.max(0, subtotal - discountAmount);
