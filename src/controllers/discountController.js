@@ -81,13 +81,18 @@ exports.updateDiscount = async (req, res) => {
 
 exports.deleteDiscount = async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    await pool.query("UPDATE discounts SET is_active = false WHERE id = $1", [
-      id,
-    ]);
-    res.json({ message: "Discount deactivated" });
+    await client.query("BEGIN");
+    await client.query("UPDATE sales SET discount_id = NULL WHERE discount_id = $1", [id]);
+    await client.query("DELETE FROM discounts WHERE id = $1", [id]);
+    await client.query("COMMIT");
+    res.json({ message: "Discount deleted" });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
     res.status(500).json({ error: "Something went wrong. Please try again." });
+  } finally {
+    client.release();
   }
 };
