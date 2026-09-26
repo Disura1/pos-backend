@@ -87,7 +87,7 @@ exports.processReturn = async (req, res) => {
       return res.status(400).json({ error: "Invalid return item" });
     }
   }
-  const validMethods = ["cash", "card"];
+  const validMethods = ["cash", "card", "exchange"];
   if (refundMethod && !validMethods.includes(refundMethod)) {
     return res.status(400).json({ error: "Invalid refund method" });
   }
@@ -160,7 +160,7 @@ exports.processReturn = async (req, res) => {
     const returnRes = await client.query(
       `INSERT INTO returns (original_sale_id, branch_id, processed_by, reason, refund_amount, refund_method)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, created_at`,
-      [saleId, branchId, req.user.id, reason || null, refundTotal, refundMethod || sale.payment_method || "cash"],
+      [saleId, branchId, req.user.id, reason || null, refundTotal, refundMethod || "exchange"],
     );
     const returnId = returnRes.rows[0].id;
 
