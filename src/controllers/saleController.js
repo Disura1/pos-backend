@@ -277,7 +277,7 @@ exports.getSaleDetail = async (req, res) => {
     // in a receipt or sale-detail view that any role (including Cashier) can open.
     const items = await pool.query(
       `SELECT si.id, si.sale_id, si.variant_id, si.quantity, si.unit_price, si.total_price,
-              pv.sku, pv.size, pv.color,
+              pv.sku, pv.size, pv.color, pv.stated_price,
               p.name AS product_name
        FROM sale_items si
        JOIN product_variants pv ON si.variant_id = pv.id

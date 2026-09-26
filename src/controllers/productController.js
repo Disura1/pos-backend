@@ -97,7 +97,7 @@ exports.deleteProduct = async (req, res) => {
 
 exports.updateVariant = async (req, res) => {
   const { id } = req.params;
-  const { sku, size, color, barcode, variant_price } = req.body;
+  const { sku, size, color, barcode, variant_price, stated_price } = req.body;
   try {
     if (!sku || !sku.trim())
       return res.status(400).json({ error: "SKU is required" });
@@ -115,14 +115,15 @@ exports.updateVariant = async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE product_variants SET sku=$1, size=$2, color=$3, barcode=$4, variant_price=$5
-       WHERE id=$6 RETURNING *`,
+      `UPDATE product_variants SET sku=$1, size=$2, color=$3, barcode=$4, variant_price=$5, stated_price=$6
+       WHERE id=$7 RETURNING *`,
       [
         sku,
         size || null,
         color || null,
         barcode || null,
         variant_price || null,
+        stated_price || null,
         id,
       ],
     );
@@ -152,7 +153,7 @@ exports.deleteVariant = async (req, res) => {
 };
 
 exports.addVariant = async (req, res) => {
-  const { product_id, sku, size, color, barcode, variant_price, branch_id } =
+  const { product_id, sku, size, color, barcode, variant_price, stated_price, branch_id } =
     req.body;
   const client = await pool.connect();
   try {
@@ -183,9 +184,9 @@ exports.addVariant = async (req, res) => {
     }
 
     const result = await client.query(
-      `INSERT INTO product_variants (product_id, sku, size, color, barcode, variant_price)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [product_id, sku, size, color, barcode, variant_price || null],
+      `INSERT INTO product_variants (product_id, sku, size, color, barcode, variant_price, stated_price)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [product_id, sku, size, color, barcode, variant_price || null, stated_price || null],
     );
     const variantId = result.rows[0].id;
 
@@ -219,7 +220,7 @@ exports.addVariant = async (req, res) => {
 exports.quickCreateProduct = async (req, res) => {
   const {
     name, description, base_price, category_id,
-    sku, size, color, barcode, variant_price,
+    sku, size, color, barcode, variant_price, stated_price,
     branch_id, quantity, unit_cost, note,
   } = req.body;
 
@@ -268,9 +269,9 @@ exports.quickCreateProduct = async (req, res) => {
     const product = productRes.rows[0];
 
     const variantRes = await client.query(
-      `INSERT INTO product_variants (product_id, sku, size, color, barcode, variant_price)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [product.id, sku, size || null, color || null, barcode, variant_price || null],
+      `INSERT INTO product_variants (product_id, sku, size, color, barcode, variant_price, stated_price)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [product.id, sku, size || null, color || null, barcode, variant_price || null, stated_price || null],
     );
     const variant = variantRes.rows[0];
 
@@ -342,6 +343,7 @@ exports.scanProduct = async (req, res) => {
       SELECT p.id AS product_id, p.name, p.base_price, p.description,
              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
              COALESCE(pv.variant_price, p.base_price) AS price,
+             pv.stated_price,
              COALESCE(i.stock_qty, 0) AS stock_qty
       FROM products p
       JOIN product_variants pv ON p.id = pv.product_id
@@ -373,6 +375,7 @@ exports.searchProducts = async (req, res) => {
       SELECT p.id AS product_id, p.name, p.base_price, p.description,
              pv.id AS variant_id, pv.sku, pv.size, pv.color, pv.barcode,
              COALESCE(pv.variant_price, p.base_price) AS price,
+             pv.stated_price,
              COALESCE(i_this.stock_qty, 0)            AS stock_qty,
              COALESCE(i_total.total_stock, 0)         AS total_stock,
              (i_this.id IS NOT NULL)                  AS is_active_here
